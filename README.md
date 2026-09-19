@@ -18,7 +18,22 @@
 - **多成员账号**：家人/访客角色分级，访客只读
 - **在线升级**：配置更新源后，公网推送升级包
 
-## 快速开始（Docker）
+## 下载安装（NAS 一键部署 · 推荐）
+
+到 [Releases](https://github.com/pengxu795/family-memory-album/releases) 下载 **`family-memory-album-nas-deploy-<版本>.tar.gz`**（内含预构建镜像 + 安装脚本，全离线、小白可用）：
+
+```bash
+tar -xzf family-memory-album-nas-deploy-*.tar.gz && cd deploy
+./install_nas.sh                          # 自动导入镜像并启动，默认端口 8788
+# 可选参数：
+#   --dir /volume1/docker/family-memory-album   安装目录
+#   --port 8788                                 端口
+#   --photos /your/photos                       已有照片目录（默认 ./photos）
+```
+
+装完浏览器打开 `http://<NAS的IP>:8788` 即可。支持群晖 DSM / 威联通 / 任意有 Docker 的 x86 Linux。
+
+## 快速开始（Docker 源码构建）
 
 ```bash
 # 1. 下载模型权重（Apache-2.0，约 40MB；首次构建必须）

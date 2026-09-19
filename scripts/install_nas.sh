@@ -14,7 +14,7 @@
 #         docker-compose.yml → 启动 → 输出访问地址和首次使用引导。
 # ============================================================
 set -u
-IMAGE_DEFAULT="family-memory-album:0.5"
+IMAGE_DEFAULT="family-memory-album:1.0.0"
 DEFAULT_REGISTRY=""                        # 例：registry.cn-hangzhou.aliyuncs.com/你的命名空间
 IMAGE="${IMAGE:-$IMAGE_DEFAULT}"
 IMAGE_TAR=""
@@ -40,6 +40,15 @@ done
 say()  { printf '\n\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[x]\033[0m %s\n' "$*"; exit 1; }
+
+# 2026-09-19：一键部署包场景——脚本同目录自带离线镜像包则自动走离线安装
+if [ -z "$IMAGE_TAR" ]; then
+  _auto="$(cd "$(dirname "$0")" 2>/dev/null && ls family-memory-album-*-nas-amd64.tar.gz 2>/dev/null | head -1)"
+  if [ -n "$_auto" ]; then
+    IMAGE_TAR="$(cd "$(dirname "$0")" && pwd)/$_auto"
+    say "发现同目录离线镜像包：$_auto（自动离线安装）"
+  fi
+fi
 
 # ---------- 1. 检测 Docker（兼容群晖路径） ----------
 say "检测 Docker 环境…"
