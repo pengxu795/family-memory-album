@@ -11,7 +11,7 @@ POC 阶段 person_intelligence_v0.py 只处理了 cohort_poc_v01 的 2,272 个�
   python backfill_faces_full.py --calibrate   # 只做阈值校准(秒级)
   python backfill_faces_full.py               # 全量检测+归属(小时级, 建议后台)
 """
-import argparse, hashlib, json, os, sqlite3, subprocess, tempfile, time
+import argparse, hashlib, json, os, shutil, sqlite3, subprocess, tempfile, time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -37,7 +37,14 @@ INSIGHTFACE_MODEL_DIR = Path(os.environ.get(
 PIPELINE = f'person-intelligence-v0.3-{BACKEND}'
 MAX_DIM = 1280
 SAMPLE_ROLE = 'library'
-FFMPEG = '/opt/homebrew/bin/ffmpeg'
+# 2026-09-19 开源发行版：ffmpeg 不再硬编码 macOS homebrew 路径——
+# 容器/Linux 用 PATH 上的 ffmpeg，Mac 本地开发自动落到 homebrew。
+def _find_ffmpeg():
+    import shutil
+    return (os.environ.get("FFMPEG_BIN") or shutil.which("ffmpeg")
+            or ("/usr/bin/ffmpeg" if os.path.exists("/usr/bin/ffmpeg") else None)
+            or ("/opt/homebrew/bin/ffmpeg" if os.path.exists("/opt/homebrew/bin/ffmpeg") else "ffmpeg"))
+FFMPEG = _find_ffmpeg()
 
 # 归属策略: kNN 投票(实测 leave-one-out 准确率 97.2%), 已弃质心方案(母女/兄妹相似度过高)
 KNN_K = 10
@@ -73,8 +80,14 @@ def load_photo(path, ext):
     if ext and ext.lower() in ('.heic', '.heif'):
         with tempfile.TemporaryDirectory(dir='/tmp') as td:
             out = Path(td) / 'image.jpg'
-            subprocess.run(['sips', '-s', 'format', 'jpeg', '-Z', str(MAX_DIM), path, '--out', str(out)],
-                           capture_output=True, check=True, timeout=45)
+            # 2026-09-19：sips 仅 macOS 有；容器/Linux 用 ffmpeg 转码（HEIC 解码走 libheif）
+            if shutil.which('sips'):
+                subprocess.run(['sips', '-s', 'format', 'jpeg', '-Z', str(MAX_DIM), path, '--out', str(out)],
+                               capture_output=True, check=True, timeout=45)
+            else:
+                subprocess.run([FFMPEG, '-hide_banner', '-loglevel', 'error', '-y', '-i', path,
+                                '-frames:v', '1', '-vf', f'scale={MAX_DIM}:-2', str(out)],
+                               capture_output=True, check=True, timeout=45)
             image = cv2.imread(str(out), cv2.IMREAD_COLOR)
     else:
         image = cv2.imread(path, cv2.IMREAD_COLOR)

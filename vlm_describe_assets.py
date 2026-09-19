@@ -20,6 +20,7 @@ import datetime
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -126,8 +127,13 @@ def img_b64(path, px=768):
             return base64.b64encode(data).decode()
         t = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
         t.close()
-        sp.run(["sips", "-Z", str(px), "-s", "format", "jpeg", path, "--out", t.name],
-               capture_output=True, timeout=20, check=True)
+        if shutil.which("sips"):   # macOS 快路径；容器/Linux 走 ffmpeg（2026-09-19）
+            sp.run(["sips", "-Z", str(px), "-s", "format", "jpeg", path, "--out", t.name],
+                   capture_output=True, timeout=20, check=True)
+        else:
+            sp.run([FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", path, "-frames:v", "1", "-vf", f"scale={px}:-2", t.name],
+                   capture_output=True, timeout=20, check=True)
         with open(t.name, "rb") as f:
             out = base64.b64encode(f.read()).decode()
         os.unlink(t.name)

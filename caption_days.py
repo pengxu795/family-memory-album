@@ -30,6 +30,12 @@ WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"
 
 CRED_FILE = os.path.expanduser("~/.dsh/.credentials.yaml")
 
+# 2026-09-19 开源发行版：ffmpeg 不硬编码 macOS homebrew；sips 仅 macOS 有
+import shutil
+FFMPEG_BIN = (os.environ.get("FFMPEG_BIN") or shutil.which("ffmpeg")
+              or ("/usr/bin/ffmpeg" if os.path.exists("/usr/bin/ffmpeg") else "")
+              or ("/opt/homebrew/bin/ffmpeg" if os.path.exists("/opt/homebrew/bin/ffmpeg") else "ffmpeg"))
+
 
 def load_api_key():
     try:
@@ -51,11 +57,16 @@ def _img_b64(path, px=400):
     t = f"/tmp/cap_{os.getpid()}.jpg"
     try:
         if path.lower().endswith((".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm")):
-            sp.run(["/opt/homebrew/bin/ffmpeg", "-hide_banner", "-loglevel", "error",
+            sp.run([FFMPEG_BIN, "-hide_banner", "-loglevel", "error",
                     "-ss", "0.5", "-i", path, "-frames:v", "1", "-vf", f"scale={px}:-2",
                     "-f", "image2", t], capture_output=True, timeout=20, check=True)
-        else:
+        elif shutil.which("sips"):
             sp.run(["sips", "-Z", str(px), "-s", "format", "jpeg", path, "--out", t],
+                   capture_output=True, timeout=20, check=True)
+        else:
+            # 容器/Linux：ffmpeg 转码缩图（与视频同路，无 seek）
+            sp.run([FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", path, "-frames:v", "1", "-vf", f"scale={px}:-2", t],
                    capture_output=True, timeout=20, check=True)
         with open(t, "rb") as f:
             return base64.b64encode(f.read()).decode()

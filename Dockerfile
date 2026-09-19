@@ -15,8 +15,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
     PORT=8788 \
     FF_DATA_DIR=/data \
-    FF_FACE_BACKEND=adaface \
-    FF_ADAFACE_DIR=/models/adaface \
+    FF_FACE_BACKEND=opencv \
+    FF_OPENCV_MODEL_DIR=/models \
     FF_SIGLIP2_DIR=/models/siglip2-base-patch16-224 \
     FF_BIND=0.0.0.0
 
@@ -51,10 +51,12 @@ COPY server.py schema.py geo_cities_cn.py \
      enrich.py vlm_describe_assets.py caption_days.py privacy_auto_scan.py \
      manual_face_create.py \
      migrate_paths.py schema_raw.json /app/
-# ---- 核心模型内置（2026-09-10 NAS 发行版）：人脸全链路开箱即用 ----
-# adaface(识别+检测) + genderage/2d106det/u2netp 属性对齐抠图，合计 ≈103M。
+# ---- 核心模型内置（开源发行版，全部 Apache-2.0 可分发）----
+# YuNet 人脸检测 + SFace 人脸识别（后端默认 opencv）+ U²-Netp 抠图，合计 ≈43M。
 # siglip2（1.4G 向量模型）不内置：4G 内存 NAS 带不动且拖慢首启；
 # 开启语义搜索的方法见 docs/INSTALL_NAS.md「可选增强」（hf-mirror 手动下载挂载）。
+# AdaFace 等非商用权重（WebFace4M 许可）不随镜像分发；如需更高精度，
+# 自行下载权重挂载并设 FF_FACE_BACKEND=adaface（见 docs/MODEL_LICENSES.md）。
 # 注意：容器内 /models 已内置核心模型，compose 不应再挂载 /models 卷覆盖。
 COPY baked_models/ /models/
 COPY migrations/ /app/migrations/
@@ -62,8 +64,8 @@ COPY static/ /app/static/
 
 # 数据目录由数据卷提供（compose 挂 ./data:/data，FF_DATA_DIR 已指向 /data）
 # 日志目录 /app/logs 由服务启动时自动创建（server.py:7895 mkdir）
-# 模型目录不进镜像（权重大）：compose 挂 <repo>/../models:/models:ro，
-#   含 adaface_ir_18.onnx（出厂人脸后端）与 siglip2-base-patch16-224（可选，无 torch 时自动降级离线）
+# 可选模型（如 siglip2 语义向量、AdaFace 高精度识别）不进镜像：
+#   下载后挂载到对应目录并按 docs/INSTALL_NAS.md「可选增强」配置环境变量
 
 EXPOSE 8788
 

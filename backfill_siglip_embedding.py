@@ -69,7 +69,7 @@ def main():
         json.dump(payload, f)
 
     code = r'''
-import json, os, time, sys, sqlite3
+import json, os, time, sys, sqlite3, shutil
 from pathlib import Path
 os.environ["HF_HUB_OFFLINE"] = "1"
 from transformers import AutoModel, AutoProcessor
@@ -110,7 +110,7 @@ for i in range(0, len(items), BATCH):
                 last_error = None
                 for seek in ("0.5", "0"):
                     try:
-                        subprocess.run(["/opt/homebrew/bin/ffmpeg","-hide_banner","-loglevel","error",
+                        subprocess.run([os.environ.get("FFMPEG_BIN") or "ffmpeg","-hide_banner","-loglevel","error",
                             "-ss",seek,"-i",p,"-frames:v","1","-vf","scale=224:-2","-y",tmp],
                             capture_output=True, timeout=15, check=True)
                         if os.path.exists(tmp) and os.path.getsize(tmp):
@@ -126,11 +126,17 @@ for i in range(0, len(items), BATCH):
                 try:
                     im = Image.open(p).convert("RGB")
                 except Exception:
-                    # Pillow 默认不能读取部分 HEIC；用 macOS sips 只读转换临时副本。
+                    # Pillow 默认不能读取部分 HEIC；macOS 用 sips 只读转换，容器/Linux 用 ffmpeg
                     import subprocess, tempfile
                     tmp = tempfile.mktemp(suffix=".jpg")
-                    subprocess.run(["sips", "-Z", "1200", "-s", "format", "jpeg", p, "--out", tmp],
-                                   capture_output=True, timeout=30, check=True)
+                    if shutil.which("sips"):
+                        subprocess.run(["sips", "-Z", "1200", "-s", "format", "jpeg", p, "--out", tmp],
+                                       capture_output=True, timeout=30, check=True)
+                    else:
+                        subprocess.run([os.environ.get("FFMPEG_BIN") or "ffmpeg", "-hide_banner",
+                                        "-loglevel", "error", "-y", "-i", p, "-frames:v", "1",
+                                        "-vf", "scale=1200:-2", tmp],
+                                       capture_output=True, timeout=30, check=True)
                     im = Image.open(tmp).convert("RGB")
                     batch_tmps.append(tmp)
             imgs.append(im); valid.append(it)
