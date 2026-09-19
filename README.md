@@ -20,7 +20,17 @@
 
 ## 下载安装（NAS 一键部署 · 推荐）
 
-到 [Releases](https://github.com/pengxu795/family-memory-album/releases) 下载 **`family-memory-album-nas-deploy-<版本>.tar.gz`**（内含预构建镜像 + 安装脚本，全离线、小白可用）：
+**方式 A · Docker 在线拉取**（有外网的 NAS/服务器最省事）：
+
+```bash
+docker run -d --name family-memory-album \
+  -p 8788:8788 \
+  -v /your/data/dir:/data \
+  -v /your/photos:/photos:ro \
+  ghcr.io/pengxu795/family-memory-album:1.0.0
+```
+
+**方式 B · 离线一键部署包**（NAS 不方便联外网时）：到 [Releases](https://github.com/pengxu795/family-memory-album/releases) 下载 **`family-memory-album-nas-deploy-<版本>.tar.gz`**（内含预构建镜像 + 安装脚本，全离线、小白可用）：
 
 ```bash
 tar -xzf family-memory-album-nas-deploy-*.tar.gz && cd deploy
