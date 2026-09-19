@@ -152,10 +152,19 @@ services:
       retries: 3
 EOF
 
-# ---------- 5. 启动 ----------
+# ---------- 5. 启动（重装语义：先清掉旧容器，数据目录保留） ----------
+# 2026-09-19：重跑安装脚本 / 换目录重装时，旧的 family-memory-album 容器会被自动移除；
+# 数据库和照片都在挂载目录里，删容器不会丢任何数据。
+if "$DOCKER" ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$CNAME"; then
+  warn "检测到已有容器 $CNAME，先移除（数据目录保留，不丢照片和数据库）"
+  if [ -f "$INSTALL_DIR/docker-compose.yml" ] && [ -n "$COMPOSE" ]; then
+    (cd "$INSTALL_DIR" && $COMPOSE down --remove-orphans >/dev/null 2>&1) || true
+  fi
+  "$DOCKER" rm -f "$CNAME" >/dev/null 2>&1 || true
+fi
 say "启动服务…"
 if [ -n "$COMPOSE" ]; then
-  (cd "$INSTALL_DIR" && $COMPOSE up -d) || die "启动失败，查看日志：$DOCKER logs family-memory-album"
+  (cd "$INSTALL_DIR" && $COMPOSE up -d) || die "启动失败，查看日志：$DOCKER logs $CNAME"
 else
   # 无 compose 的老环境：等价 docker run
   "$DOCKER" rm -f "$CNAME" >/dev/null 2>&1 || true
