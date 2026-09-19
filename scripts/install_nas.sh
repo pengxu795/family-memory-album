@@ -41,12 +41,12 @@ say()  { printf '\n\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[x]\033[0m %s\n' "$*"; exit 1; }
 
-# 2026-09-19：一键部署包场景——脚本同目录自带离线镜像包则自动走离线安装
+# 2026-09-19 一键部署包场景: 脚本同目录自带离线镜像包时自动走离线安装
 if [ -z "$IMAGE_TAR" ]; then
   _auto="$(cd "$(dirname "$0")" 2>/dev/null && ls family-memory-album-*-nas-amd64.tar.gz 2>/dev/null | head -1)"
   if [ -n "$_auto" ]; then
     IMAGE_TAR="$(cd "$(dirname "$0")" && pwd)/$_auto"
-    say "发现同目录离线镜像包：$_auto（自动离线安装）"
+    say "发现同目录离线镜像包: $_auto (自动离线安装)"
   fi
 fi
 
@@ -95,7 +95,7 @@ fi
 if [ -n "$IMAGE_TAR" ]; then
   [ -f "$IMAGE_TAR" ] || [ -f "$INSTALL_DIR/$IMAGE_TAR" ] || die "镜像包不存在：$IMAGE_TAR"
   TAR_PATH="${IMAGE_TAR:-$INSTALL_DIR/$IMAGE_TAR}"; [ -f "$TAR_PATH" ] || TAR_PATH="$INSTALL_DIR/$IMAGE_TAR"
-  say "离线导入镜像：$TAR_PATH（约 1-2 分钟）"
+  say "离线导入镜像：${TAR_PATH}（约 1-2 分钟）"
   # 兼容两种包：镜像包（docker save|gzip）或一键部署包（内含 install_nas.sh + 镜像包）
   if tar -tzf "$TAR_PATH" 2>/dev/null | grep -q "family-memory-album-.*-nas-amd64.tar.gz"; then
     warn "检测到一键部署包（内含镜像），先解出镜像…"
@@ -195,7 +195,7 @@ cat <<EOF
 
   首次使用（跟着浏览器向导走，共 3 步）：
     1. 创建管理员账号（记好密码）
-    2. 选择照片目录 → 填 /photos（照片已在 $PHOTOS_MOUNT）
+    2. 选择照片目录 → 填 /photos（照片已在 ${PHOTOS_MOUNT}）
     3. 开始扫描，等进度条跑完就能看到照片墙
 
   常用命令：
@@ -203,10 +203,10 @@ cat <<EOF
     重启      $DOCKER restart $CNAME
     升级      下载新版部署包后重跑 install_nas.sh --image <新镜像包>
     卸载      cd $INSTALL_DIR && $DOCKER rm -f $CNAME
-              （照片和数据库在 $INSTALL_DIR，删容器不会丢）
+              （照片和数据库在 ${INSTALL_DIR}，删容器不会丢）
 
   数据位置：  $INSTALL_DIR/data（数据库与缩略图）
-              $PHOTOS_MOUNT（照片原片，始终不动）
+              ${PHOTOS_MOUNT}（照片原片，始终不动）
 
   内存建议：  4G 可用（人脸识别可用）；8G 及以上体验最佳
   语义搜索：  可选增强，见 docs/INSTALL_NAS.md「开启语义搜索」
