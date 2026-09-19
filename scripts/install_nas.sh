@@ -156,7 +156,7 @@ EOF
 # 2026-09-19：重跑安装脚本 / 换目录重装时，旧的 family-memory-album 容器会被自动移除；
 # 数据库和照片都在挂载目录里，删容器不会丢任何数据。
 if "$DOCKER" ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$CNAME"; then
-  warn "检测到已有容器 $CNAME，先移除（数据目录保留，不丢照片和数据库）"
+  warn "检测到已有容器 ${CNAME}，先移除（数据目录保留，不丢照片和数据库）"
   if [ -f "$INSTALL_DIR/docker-compose.yml" ] && [ -n "$COMPOSE" ]; then
     (cd "$INSTALL_DIR" && $COMPOSE down --remove-orphans >/dev/null 2>&1) || true
   fi
