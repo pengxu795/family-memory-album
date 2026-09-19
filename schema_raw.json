@@ -1,0 +1,354 @@
+{
+ "source_db": "data/family_memory.db",
+ "dumped_at": "2026-09-08T13:36:03",
+ "table_count": 71,
+ "index_count": 15,
+ "tables": [
+  {
+   "name": "ab_blind_review_v1",
+   "sql": "CREATE TABLE ab_blind_review_v1(\n      query_id TEXT NOT NULL, variant TEXT NOT NULL, query_text TEXT NOT NULL,\n      asset_id TEXT NOT NULL, blind_order INTEGER NOT NULL,\n      label TEXT CHECK(label IN ('relevant','not_relevant','unsure')),\n      reviewer TEXT, reviewed_at TEXT, note TEXT,\n      PRIMARY KEY(query_id,variant,asset_id));"
+  },
+  {
+   "name": "ab_ranking_v1",
+   "sql": "CREATE TABLE ab_ranking_v1(\n      query_id TEXT NOT NULL, variant TEXT NOT NULL, query_text TEXT NOT NULL,\n      model_name TEXT NOT NULL, rank INTEGER NOT NULL, asset_id TEXT NOT NULL,\n      score REAL NOT NULL, created_at TEXT NOT NULL,\n      PRIMARY KEY(query_id,variant,model_name,rank));"
+  },
+  {
+   "name": "ab_sample_v1",
+   "sql": "CREATE TABLE ab_sample_v1 (\n  asset_id TEXT PRIMARY KEY, sample_role TEXT, source_label TEXT,\n  capture_time TEXT, media_type TEXT, region TEXT, path TEXT, selected_at TEXT);"
+  },
+  {
+   "name": "analysis_run",
+   "sql": "CREATE TABLE analysis_run (\n  run_id TEXT PRIMARY KEY,\n  pipeline_name TEXT NOT NULL,\n  pipeline_version TEXT NOT NULL,\n  config_json TEXT,\n  started_at TEXT NOT NULL,\n  finished_at TEXT,\n  status TEXT NOT NULL,\n  stats_json TEXT\n);"
+  },
+  {
+   "name": "annotation",
+   "sql": "CREATE TABLE annotation (\n  annotation_id TEXT PRIMARY KEY,\n  subject_type TEXT NOT NULL CHECK(subject_type IN ('asset','event','person','memory')),\n  subject_id TEXT NOT NULL,\n  key TEXT NOT NULL,\n  value_json TEXT NOT NULL,\n  confidence REAL,\n  provenance TEXT NOT NULL,\n  model_name TEXT,\n  review_status TEXT NOT NULL DEFAULT 'unreviewed',\n  created_at TEXT NOT NULL\n);"
+  },
+  {
+   "name": "anonymous_person_cluster_v0",
+   "sql": "CREATE TABLE anonymous_person_cluster_v0 (\n      cluster_id TEXT PRIMARY KEY, cluster_version TEXT NOT NULL, member_count INTEGER NOT NULL,\n      asset_count INTEGER NOT NULL, cohesion_min REAL, cohesion_mean REAL,\n      hypothesis_status TEXT NOT NULL CHECK(hypothesis_status IN ('candidate','confirmed','split','merged','rejected')), created_at TEXT NOT NULL);"
+  },
+  {
+   "name": "anonymous_person_membership_v0",
+   "sql": "CREATE TABLE anonymous_person_membership_v0 (\n      cluster_id TEXT NOT NULL REFERENCES anonymous_person_cluster_v0(cluster_id),\n      face_instance_id TEXT NOT NULL REFERENCES face_instance_v0(face_instance_id), membership_score REAL,\n      status TEXT NOT NULL CHECK(status IN ('candidate','confirmed','rejected')),\n      PRIMARY KEY(cluster_id,face_instance_id));"
+  },
+  {
+   "name": "api_providers_v0",
+   "sql": "CREATE TABLE api_providers_v0 (\n        provider_id TEXT PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL,\n        api_key TEXT DEFAULT '', model TEXT NOT NULL, vision INTEGER DEFAULT 1,\n        free INTEGER DEFAULT 0, enabled INTEGER DEFAULT 1, status TEXT DEFAULT '',\n        created_at TEXT NOT NULL, sort_order INTEGER DEFAULT 0);"
+  },
+  {
+   "name": "app_setting_v0",
+   "sql": "CREATE TABLE app_setting_v0 (\n        key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);"
+  },
+  {
+   "name": "asset_allowlist_v0",
+   "sql": "CREATE TABLE asset_allowlist_v0 (\n        asset_id TEXT PRIMARY KEY, note TEXT, created_at TEXT);"
+  },
+  {
+   "name": "asset_description_v0",
+   "sql": "CREATE TABLE asset_description_v0 (\n        asset_id TEXT PRIMARY KEY,\n        description TEXT NOT NULL,\n        model TEXT,\n        created_at TEXT NOT NULL);"
+  },
+  {
+   "name": "asset_filter_v0",
+   "sql": "CREATE TABLE asset_filter_v0 (\n          asset_id TEXT NOT NULL REFERENCES media_asset(asset_id),\n          filter_reason TEXT NOT NULL,\n          evidence_kind TEXT NOT NULL CHECK(evidence_kind IN ('path','filename','visual','ocr','user')),\n          evidence_value TEXT NOT NULL,\n          confidence REAL NOT NULL,\n          rule_version TEXT NOT NULL,\n          created_at TEXT NOT NULL,\n          PRIMARY KEY(asset_id,filter_reason,rule_version)\n        );"
+  },
+  {
+   "name": "asset_fingerprint_v01",
+   "sql": "CREATE TABLE asset_fingerprint_v01 (\n      asset_id TEXT PRIMARY KEY REFERENCES media_asset(asset_id), file_id TEXT NOT NULL REFERENCES media_file(file_id),\n      sha256 TEXT, phash TEXT, fingerprint_version TEXT NOT NULL, evidence_json TEXT NOT NULL, created_at TEXT NOT NULL\n    );"
+  },
+  {
+   "name": "asset_geo_v0",
+   "sql": "CREATE TABLE asset_geo_v0 (\n      asset_id TEXT PRIMARY KEY REFERENCES media_asset(asset_id),\n      latitude REAL, longitude REAL,\n      region TEXT, province TEXT,\n      is_coastal INTEGER NOT NULL DEFAULT 0,\n      is_mountainous INTEGER NOT NULL DEFAULT 0,\n      location_source TEXT NOT NULL,\n      created_at TEXT NOT NULL\n    );"
+  },
+  {
+   "name": "asset_relation",
+   "sql": "CREATE TABLE asset_relation (\n  left_asset_id TEXT NOT NULL REFERENCES media_asset(asset_id),\n  right_asset_id TEXT NOT NULL REFERENCES media_asset(asset_id),\n  relation_type TEXT NOT NULL CHECK(relation_type IN ('exact_duplicate','near_duplicate','compressed_variant','edited_variant','live_photo_pair','same_moment')),\n  score REAL,\n  evidence_json TEXT,\n  status TEXT NOT NULL DEFAULT 'candidate',\n  PRIMARY KEY(left_asset_id,right_asset_id,relation_type)\n);"
+  },
+  {
+   "name": "asset_relationship_v01",
+   "sql": "CREATE TABLE asset_relationship_v01 (\n      relationship_id TEXT PRIMARY KEY,\n      left_asset_id TEXT NOT NULL REFERENCES media_asset(asset_id),\n      right_asset_id TEXT NOT NULL REFERENCES media_asset(asset_id),\n      relationship_type TEXT NOT NULL CHECK(relationship_type IN ('EXACT_DUPLICATE','DERIVED_COPY','VISUALLY_SIMILAR','LIVE_PHOTO_PAIR')),\n      confidence REAL NOT NULL, evidence_json TEXT NOT NULL,\n      status TEXT NOT NULL CHECK(status IN ('candidate','confirmed','rejected','unvalidated')),\n      created_at TEXT NOT NULL,\n      UNIQUE(left_asset_id,right_asset_id,relationship_type)\n    );"
+  },
+  {
+   "name": "asset_similar_group_v0",
+   "sql": "CREATE TABLE asset_similar_group_v0 (\n        group_id TEXT PRIMARY KEY,\n        best_asset_id TEXT NOT NULL,\n        source_id TEXT,\n        start_time TEXT,\n        end_time TEXT,\n        asset_count INTEGER NOT NULL,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n    );"
+  },
+  {
+   "name": "asset_similar_member_v0",
+   "sql": "CREATE TABLE asset_similar_member_v0 (\n        group_id TEXT NOT NULL REFERENCES asset_similar_group_v0(group_id),\n        asset_id TEXT NOT NULL REFERENCES media_asset(asset_id),\n        pick_score REAL NOT NULL DEFAULT 0,\n        is_best INTEGER NOT NULL DEFAULT 0,\n        PRIMARY KEY(group_id, asset_id)\n    );"
+  },
+  {
+   "name": "canonical_candidate_v01",
+   "sql": "CREATE TABLE canonical_candidate_v01 (\n      group_id TEXT NOT NULL, asset_id TEXT NOT NULL REFERENCES media_asset(asset_id), canonical_score REAL NOT NULL,\n      reasons_json TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('candidate','selected','rejected')) DEFAULT 'candidate',\n      created_at TEXT NOT NULL, PRIMARY KEY(group_id,asset_id)\n    );"
+  },
+  {
+   "name": "category_layout_v0",
+   "sql": "CREATE TABLE category_layout_v0 (\n        kind TEXT NOT NULL,\n        target TEXT NOT NULL,\n        parent TEXT NOT NULL DEFAULT '',\n        sort_order INTEGER NOT NULL DEFAULT 0,\n        show_on_home INTEGER NOT NULL DEFAULT 1,\n        updated_at TEXT NOT NULL,\n        PRIMARY KEY(kind, target)\n    );"
+  },
+  {
+   "name": "cohort",
+   "sql": "CREATE TABLE cohort (\n  cohort_id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  purpose TEXT,\n  config_json TEXT NOT NULL,\n  created_at TEXT NOT NULL\n);"
+  },
+  {
+   "name": "cohort_asset",
+   "sql": "CREATE TABLE cohort_asset (\n  cohort_id TEXT NOT NULL REFERENCES cohort(cohort_id),\n  asset_id TEXT NOT NULL REFERENCES media_asset(asset_id),\n  sample_role TEXT NOT NULL CHECK(sample_role IN ('positive','negative')),\n  source_label TEXT,\n  PRIMARY KEY(cohort_id,asset_id)\n);"
+  },
+  {
+   "name": "crop_v0",
+   "sql": "CREATE TABLE crop_v0 (\n        asset_id TEXT PRIMARY KEY,\n        x REAL NOT NULL, y REAL NOT NULL, w REAL NOT NULL, h REAL NOT NULL,\n        updated_at TEXT NOT NULL\n    );"
+  },
+  {
+   "name": "day_caption_v0",
+   "sql": "CREATE TABLE day_caption_v0 (\n        day TEXT PRIMARY KEY,\n        family_id TEXT NOT NULL DEFAULT 'fam_default',\n        caption_local TEXT,\n        caption_vlm TEXT,\n        vlm_model TEXT,\n        rep_asset_ids TEXT,\n        stats_json TEXT,\n        updated_at TEXT NOT NULL\n    );"
+  },
+  {
+   "name": "day_corroboration_v0",
+   "sql": "CREATE TABLE day_corroboration_v0 (\n      day TEXT PRIMARY KEY,\n      asset_count INTEGER NOT NULL,\n      photo_count INTEGER NOT NULL,\n      video_count INTEGER NOT NULL,\n      sources_json TEXT NOT NULL,\n      devices_json TEXT NOT NULL,\n      source_count INTEGER NOT NULL,\n      device_count INTEGER NOT NULL,\n      same_moment_count INTEGER NOT NULL,\n      exact_cross_count INTEGER NOT NULL,\n      geo_conflict_count INTEGER NOT NULL DEFAULT 0,\n      corroborated INTEGER NOT NULL DEFAULT 0,\n      updated_at TEXT NOT NULL\n    );"
+  },
+  {
+   "name": "deterministic_metadata",
+   "sql": "CREATE TABLE deterministic_metadata (\n      file_id TEXT PRIMARY KEY REFERENCES media_file(file_id),\n      extracted_at TEXT NOT NULL, extractor TEXT NOT NULL, raw_json TEXT NOT NULL,\n      datetime_original TEXT, create_date TEXT, media_create_date TEXT,\n      track_create_date TEXT, metadata_modify_date TEXT, file_modify_date TEXT,\n      file_create_date TEXT, gps_datetime TEXT, timezone_offset TEXT,\n      latitude REAL, longitude REAL, camera_make TEXT, camera_model TEXT,\n      lens_model TEXT, width INTEGER, height INTEGER, duration_seconds REAL, rotation REAL\n    );"
+  },
+  {
+   "name": "embedding",
+   "sql": "CREATE TABLE embedding (\n  subject_type TEXT NOT NULL CHECK(subject_type IN ('asset','event','memory','face')),\n  subject_id TEXT NOT NULL,\n  model_name TEXT NOT NULL,\n  dimension INTEGER NOT NULL,\n  vector BLOB NOT NULL,\n  created_at TEXT NOT NULL,\n  PRIMARY KEY(subject_type,subject_id,model_name)\n);"
+  },
+  {
+   "name": "evaluation_detail",
+   "sql": "CREATE TABLE evaluation_detail (\n      run_id TEXT NOT NULL REFERENCES evaluation_run(run_id),\n      query_id TEXT NOT NULL,\n      rank INTEGER NOT NULL,\n      asset_id TEXT NOT NULL,\n      relevant INTEGER NOT NULL,\n      score REAL,\n      evidence TEXT,\n      PRIMARY KEY(run_id, query_id, rank)\n    );"
+  },
+  {
+   "name": "evaluation_query",
+   "sql": "CREATE TABLE evaluation_query (\n  query_id TEXT PRIMARY KEY,\n  cohort_id TEXT NOT NULL REFERENCES cohort(cohort_id),\n  query_text TEXT NOT NULL,\n  parsed_intent_json TEXT,\n  status TEXT NOT NULL DEFAULT 'draft',\n  notes TEXT\n);"
+  },
+  {
+   "name": "evaluation_relevance",
+   "sql": "CREATE TABLE evaluation_relevance (\n      query_id TEXT NOT NULL REFERENCES evaluation_query(query_id),\n      asset_id TEXT NOT NULL REFERENCES media_asset(asset_id),\n      relevant INTEGER NOT NULL DEFAULT 1,\n      note TEXT,\n      PRIMARY KEY(query_id, asset_id)\n    );"
+  },
+  {
+   "name": "evaluation_relevance_v1",
+   "sql": "CREATE TABLE evaluation_relevance_v1 (\n      query_id TEXT NOT NULL REFERENCES evaluation_query(query_id),\n      asset_id TEXT NOT NULL REFERENCES media_asset(asset_id),\n      label TEXT NOT NULL CHECK(label IN ('relevant','not_relevant','unsure')),\n      user_confirmed INTEGER NOT NULL DEFAULT 0,\n      source TEXT NOT NULL DEFAULT 'pool',      -- 进入候选池的来源：structure/person/visual/event/random\n      reviewed_at TEXT,\n      note TEXT,\n      PRIMARY KEY(query_id, asset_id)\n    );"
+  },
+  {
+   "name": "evaluation_run",
+   "sql": "CREATE TABLE evaluation_run (\n      run_id TEXT PRIMARY KEY,\n      baseline TEXT NOT NULL,\n      config_json TEXT NOT NULL,\n      started_at TEXT NOT NULL,\n      finished_at TEXT,\n      status TEXT NOT NULL,\n      summary_json TEXT\n    );"
+  },
+  {
+   "name": "event",
+   "sql": "CREATE TABLE event (\n  event_id TEXT PRIMARY KEY,\n  family_id TEXT NOT NULL REFERENCES family(family_id),\n  title TEXT,\n  event_type TEXT,\n  start_time TEXT,\n  end_time TEXT,\n  latitude REAL,\n  longitude REAL,\n  location_name TEXT,\n  summary TEXT,\n  confidence REAL,\n  status TEXT NOT NULL DEFAULT 'candidate',\n  created_by TEXT NOT NULL,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n);"
+  },
+  {
+   "name": "event_asset",
+   "sql": "CREATE TABLE event_asset (\n  event_id TEXT NOT NULL REFERENCES event(event_id),\n  asset_id TEXT NOT NULL REFERENCES media_asset(asset_id),\n  role TEXT NOT NULL DEFAULT 'member',\n  sequence_no INTEGER,\n  score REAL,\n  PRIMARY KEY(event_id,asset_id)\n);"
+  },
+  {
+   "name": "event_person",
+   "sql": "CREATE TABLE event_person (\n  event_id TEXT NOT NULL REFERENCES event(event_id),\n  person_id TEXT NOT NULL REFERENCES person(person_id),\n  confidence REAL,\n  PRIMARY KEY(event_id,person_id)\n);"
+  },
+  {
+   "name": "face",
+   "sql": "CREATE TABLE face (\n  face_id TEXT PRIMARY KEY,\n  asset_id TEXT NOT NULL REFERENCES media_asset(asset_id),\n  person_id TEXT REFERENCES person(person_id),\n  bbox_json TEXT NOT NULL,\n  detection_score REAL,\n  cluster_id TEXT,\n  embedding_model TEXT,\n  embedding BLOB,\n  identity_confidence REAL,\n  review_status TEXT NOT NULL DEFAULT 'unreviewed'\n);"
+  },
+  {
+   "name": "face_embedding_v0",
+   "sql": "CREATE TABLE face_embedding_v0 (\n      face_instance_id TEXT PRIMARY KEY REFERENCES face_instance_v0(face_instance_id), embedding_model TEXT NOT NULL,\n      dimension INTEGER NOT NULL, embedding BLOB, norm REAL, status TEXT NOT NULL CHECK(status IN ('success','failed','skipped')), created_at TEXT NOT NULL);"
+  },
+  {
+   "name": "face_expression_v0",
+   "sql": "CREATE TABLE face_expression_v0 (\n          face_instance_id TEXT PRIMARY KEY REFERENCES face_instance_v0(face_instance_id),\n          model_name TEXT NOT NULL,\n          expression TEXT NOT NULL,\n          happiness_score REAL NOT NULL,\n          top_score REAL NOT NULL,\n          scores_json TEXT NOT NULL,\n          inference_status TEXT NOT NULL CHECK(inference_status IN ('success','failed')),\n          created_at TEXT NOT NULL\n        );"
+  },
+  {
+   "name": "face_instance_v0",
+   "sql": "CREATE TABLE face_instance_v0 (\n      face_instance_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES media_asset(asset_id),\n      frame_time_seconds REAL, frame_key TEXT NOT NULL, bbox_json TEXT NOT NULL, landmarks_json TEXT NOT NULL,\n      detection_score REAL NOT NULL, face_width INTEGER NOT NULL, face_height INTEGER NOT NULL,\n      blur_score REAL, pose_score REAL, quality_class TEXT NOT NULL, sample_role TEXT NOT NULL,\n      detection_model TEXT NOT NULL, created_at TEXT NOT NULL, person_id TEXT REFERENCES person(person_id), person_locked INTEGER DEFAULT 0);"
+  },
+  {
+   "name": "face_unassign_audit_v0",
+   "sql": "CREATE TABLE face_unassign_audit_v0 (\n  face_instance_id TEXT PRIMARY KEY, person_id TEXT, display_name TEXT,\n  capture_time TEXT, birth_date TEXT, reason TEXT, created_at TEXT);"
+  },
+  {
+   "name": "face_vlm_attr_v0",
+   "sql": "CREATE TABLE face_vlm_attr_v0 (\n        face_instance_id TEXT PRIMARY KEY, age_years REAL, age_stage TEXT, gender TEXT,\n        raw TEXT, created_at TEXT);"
+  },
+  {
+   "name": "family",
+   "sql": "CREATE TABLE family (\n  family_id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',\n  created_at TEXT NOT NULL\n);"
+  },
+  {
+   "name": "geo_manual_v0",
+   "sql": "CREATE TABLE geo_manual_v0 (\n        asset_id TEXT PRIMARY KEY REFERENCES media_asset(asset_id),\n        region TEXT NOT NULL,\n        province TEXT,\n        latitude REAL,\n        longitude REAL,\n        created_at TEXT NOT NULL, start_date TEXT DEFAULT '', end_date TEXT DEFAULT '');"
+  },
+  {
+   "name": "gold_set_meta",
+   "sql": "CREATE TABLE gold_set_meta (\n      gold_set_id TEXT PRIMARY KEY,\n      status TEXT NOT NULL DEFAULT 'building',   -- building -> frozen\n      frozen_at TEXT,\n      notes TEXT\n    );"
+  },
+  {
+   "name": "group_label_v0",
+   "sql": "CREATE TABLE group_label_v0 (\n        group_key TEXT PRIMARY KEY,\n        label TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n    );"
+  },
+  {
+   "name": "group_order_v0",
+   "sql": "CREATE TABLE group_order_v0 (\n        group_key TEXT PRIMARY KEY,\n        sort_order INTEGER NOT NULL DEFAULT 0,\n        updated_at TEXT NOT NULL\n    );"
+  },
+  {
+   "name": "location_inference_v0",
+   "sql": "CREATE TABLE location_inference_v0 (\n      asset_id TEXT PRIMARY KEY REFERENCES media_asset(asset_id),\n      latitude REAL, longitude REAL,\n      location_source TEXT NOT NULL CHECK(location_source IN\n        ('EXACT_GPS','EVENT_INFERRED','VISUAL_LANDMARK','USER_CONFIRMED','UNKNOWN')),\n      confidence REAL NOT NULL,\n      anchor_asset_id TEXT,\n      time_delta_seconds REAL,\n      distance_meters REAL,\n      evidence_json TEXT NOT NULL,\n      created_at TEXT NOT NULL\n    );"
+  },
+  {
+   "name": "media_asset",
+   "sql": "CREATE TABLE media_asset (\n  asset_id TEXT PRIMARY KEY,\n  family_id TEXT NOT NULL REFERENCES family(family_id),\n  media_type TEXT NOT NULL CHECK(media_type IN ('photo','video')),\n  capture_time TEXT,\n  capture_time_end TEXT,\n  time_precision TEXT NOT NULL DEFAULT 'unknown',\n  time_confidence REAL NOT NULL DEFAULT 0,\n  latitude REAL,\n  longitude REAL,\n  location_confidence REAL,\n  width INTEGER,\n  height INTEGER,\n  duration_seconds REAL,\n  rotation REAL,\n  camera_make TEXT,\n  camera_model TEXT,\n  lens_model TEXT,\n  is_original INTEGER,\n  privacy_level TEXT NOT NULL DEFAULT 'private',\n  display_score REAL,\n  quality_score REAL,\n  description TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n);"
+  },
+  {
+   "name": "media_file",
+   "sql": "CREATE TABLE media_file (\n  file_id TEXT PRIMARY KEY,\n  asset_id TEXT NOT NULL REFERENCES media_asset(asset_id),\n  source_id TEXT NOT NULL REFERENCES source(source_id),\n  absolute_path TEXT NOT NULL UNIQUE,\n  relative_path TEXT NOT NULL,\n  filename TEXT NOT NULL,\n  extension TEXT,\n  byte_size INTEGER NOT NULL,\n  filesystem_mtime TEXT,\n  filesystem_ctime TEXT,\n  sha256 TEXT,\n  quick_hash TEXT,\n  mime_type TEXT,\n  variant_kind TEXT NOT NULL DEFAULT 'unknown',\n  availability TEXT NOT NULL DEFAULT 'online',\n  indexed_at TEXT NOT NULL\n);"
+  },
+  {
+   "name": "memory_note",
+   "sql": "CREATE TABLE memory_note (\n  memory_id TEXT PRIMARY KEY,\n  family_id TEXT NOT NULL REFERENCES family(family_id),\n  text TEXT NOT NULL,\n  source_type TEXT NOT NULL CHECK(source_type IN ('user_voice','user_text','ai_summary')),\n  speaker_person_id TEXT REFERENCES person(person_id),\n  event_id TEXT REFERENCES event(event_id),\n  asset_id TEXT REFERENCES media_asset(asset_id),\n  happened_time_text TEXT,\n  location_text TEXT,\n  created_at TEXT NOT NULL\n);"
+  },
+  {
+   "name": "memory_search",
+   "sql": "CREATE VIRTUAL TABLE memory_search USING fts5(\n            subject_type UNINDEXED, subject_id UNINDEXED, text,\n            tokenize='trigram');"
+  },
+  {
+   "name": "memory_search_config",
+   "sql": "CREATE TABLE 'memory_search_config'(k PRIMARY KEY, v) WITHOUT ROWID;"
+  },
+  {
+   "name": "memory_search_content",
+   "sql": "CREATE TABLE 'memory_search_content'(id INTEGER PRIMARY KEY, c0, c1, c2);"
+  },
+  {
+   "name": "memory_search_data",
+   "sql": "CREATE TABLE 'memory_search_data'(id INTEGER PRIMARY KEY, block BLOB);"
+  },
+  {
+   "name": "memory_search_docsize",
+   "sql": "CREATE TABLE 'memory_search_docsize'(id INTEGER PRIMARY KEY, sz BLOB);"
+  },
+  {
+   "name": "memory_search_idx",
+   "sql": "CREATE TABLE 'memory_search_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID;"
+  },
+  {
+   "name": "person",
+   "sql": "CREATE TABLE person (\n  person_id TEXT PRIMARY KEY,\n  family_id TEXT NOT NULL REFERENCES family(family_id),\n  display_name TEXT,\n  relationship_label TEXT,\n  birth_date TEXT,\n  identity_status TEXT NOT NULL DEFAULT 'unconfirmed',\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n, avatar_face_id TEXT);"
+  },
+  {
+   "name": "person_asset_processing_v0",
+   "sql": "CREATE TABLE person_asset_processing_v0 (\n      asset_id TEXT PRIMARY KEY REFERENCES media_asset(asset_id), pipeline_version TEXT NOT NULL,\n      frames_processed INTEGER NOT NULL, faces_detected INTEGER NOT NULL, status TEXT NOT NULL,\n      error_text TEXT, processed_at TEXT NOT NULL);"
+  },
+  {
+   "name": "person_relation_v0",
+   "sql": "CREATE TABLE person_relation_v0 (\n  relation_id TEXT PRIMARY KEY,\n  from_person_id TEXT NOT NULL REFERENCES person(person_id),\n  to_person_id TEXT NOT NULL REFERENCES person(person_id),\n  relation_type TEXT NOT NULL,  -- father_of / mother_of / daughter_of / son_of\n  confidence REAL NOT NULL DEFAULT 1.0,\n  source TEXT NOT NULL DEFAULT 'user_confirmed',\n  created_at TEXT NOT NULL,\n  UNIQUE(from_person_id, to_person_id, relation_type)\n);"
+  },
+  {
+   "name": "privacy_auto_v0",
+   "sql": "CREATE TABLE privacy_auto_v0 (\n        asset_id TEXT PRIMARY KEY,\n        score REAL,\n        level INTEGER,\n        reasons TEXT,\n        decision TEXT NOT NULL,\n        decided_by TEXT NOT NULL,\n        created_at TEXT NOT NULL\n    , media_type TEXT DEFAULT '');"
+  },
+  {
+   "name": "privacy_pin_v0",
+   "sql": "CREATE TABLE privacy_pin_v0 (\n        id INTEGER PRIMARY KEY CHECK (id=1),\n        pin_hash TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n    );"
+  },
+  {
+   "name": "privacy_v0",
+   "sql": "CREATE TABLE privacy_v0 (\n        asset_id TEXT PRIMARY KEY,\n        created_at TEXT NOT NULL\n    );"
+  },
+  {
+   "name": "recycle_v0",
+   "sql": "CREATE TABLE recycle_v0 (\n        asset_id TEXT PRIMARY KEY,\n        reason TEXT NOT NULL DEFAULT 'USER',\n        created_at TEXT NOT NULL\n    );"
+  },
+  {
+   "name": "review_task",
+   "sql": "CREATE TABLE review_task (\n  task_id TEXT PRIMARY KEY,\n  family_id TEXT NOT NULL REFERENCES family(family_id),\n  task_type TEXT NOT NULL,\n  subject_type TEXT NOT NULL,\n  subject_id TEXT NOT NULL,\n  question TEXT NOT NULL,\n  options_json TEXT,\n  evidence_json TEXT,\n  impact_count INTEGER NOT NULL DEFAULT 1,\n  priority REAL NOT NULL DEFAULT 0,\n  status TEXT NOT NULL DEFAULT 'pending',\n  resolution_json TEXT,\n  created_at TEXT NOT NULL,\n  resolved_at TEXT\n);"
+  },
+  {
+   "name": "scene_tag_v0",
+   "sql": "CREATE TABLE scene_tag_v0 (\n        asset_id TEXT NOT NULL,\n        tag TEXT NOT NULL,\n        source TEXT NOT NULL DEFAULT 'RULE',\n        confidence REAL NOT NULL DEFAULT 1.0,\n        created_at TEXT NOT NULL,\n        PRIMARY KEY(asset_id, tag)\n    );"
+  },
+  {
+   "name": "source",
+   "sql": "CREATE TABLE source (\n  source_id TEXT PRIMARY KEY,\n  family_id TEXT NOT NULL REFERENCES family(family_id),\n  owner_label TEXT,\n  root_path TEXT NOT NULL UNIQUE,\n  source_type TEXT NOT NULL,\n  read_only INTEGER NOT NULL DEFAULT 1,\n  last_scan_at TEXT\n, enabled INTEGER NOT NULL DEFAULT 1, total_files INTEGER NOT NULL DEFAULT 0, indexed_count INTEGER NOT NULL DEFAULT 0, failed_count INTEGER NOT NULL DEFAULT 0);"
+  },
+  {
+   "name": "time_assessment",
+   "sql": "CREATE TABLE time_assessment (\n      asset_id TEXT PRIMARY KEY REFERENCES media_asset(asset_id),\n      file_id TEXT NOT NULL REFERENCES media_file(file_id),\n      category TEXT NOT NULL, proposed_capture_time TEXT, confidence REAL NOT NULL,\n      evidence_json TEXT NOT NULL, flags_json TEXT NOT NULL, assessed_at TEXT NOT NULL\n    );"
+  },
+  {
+   "name": "user_category_member_v0",
+   "sql": "CREATE TABLE user_category_member_v0 (\n        category_id TEXT NOT NULL,\n        asset_id TEXT NOT NULL,\n        added_by TEXT,\n        added_at TEXT NOT NULL,\n        PRIMARY KEY(category_id, asset_id)\n    );"
+  },
+  {
+   "name": "user_category_v0",
+   "sql": "CREATE TABLE user_category_v0 (\n        category_id TEXT PRIMARY KEY,\n        family_id TEXT NOT NULL,\n        name TEXT NOT NULL,\n        sort_order INTEGER NOT NULL DEFAULT 0,\n        created_at TEXT NOT NULL\n    );"
+  },
+  {
+   "name": "user_trip",
+   "sql": "CREATE TABLE user_trip (\n        trip_id TEXT PRIMARY KEY,\n        name TEXT NOT NULL,\n        region TEXT NOT NULL,\n        province TEXT NOT NULL,\n        latitude REAL,\n        longitude REAL,\n        start_date TEXT NOT NULL,\n        end_date TEXT NOT NULL,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n    );"
+  },
+  {
+   "name": "vision_geo_check_v0",
+   "sql": "CREATE TABLE vision_geo_check_v0 (\n      day TEXT NOT NULL,\n      region TEXT NOT NULL,\n      verdict TEXT NOT NULL,\n      votes_json TEXT,\n      sample_count INTEGER,\n      created_at TEXT NOT NULL,\n      PRIMARY KEY(day, region)\n    );"
+  }
+ ],
+ "indexes": [
+  {
+   "name": "idx_asg_best",
+   "sql": "CREATE INDEX idx_asg_best ON asset_similar_group_v0(best_asset_id);"
+  },
+  {
+   "name": "idx_asm_asset",
+   "sql": "CREATE INDEX idx_asm_asset ON asset_similar_member_v0(asset_id);"
+  },
+  {
+   "name": "idx_asset_capture_time",
+   "sql": "CREATE INDEX idx_asset_capture_time ON media_asset(capture_time);"
+  },
+  {
+   "name": "idx_asset_filter_reason",
+   "sql": "CREATE INDEX idx_asset_filter_reason ON asset_filter_v0(filter_reason,asset_id);"
+  },
+  {
+   "name": "idx_asset_location",
+   "sql": "CREATE INDEX idx_asset_location ON media_asset(latitude,longitude);"
+  },
+  {
+   "name": "idx_event_time",
+   "sql": "CREATE INDEX idx_event_time ON event(start_time,end_time);"
+  },
+  {
+   "name": "idx_face_cluster",
+   "sql": "CREATE INDEX idx_face_cluster ON face(cluster_id);"
+  },
+  {
+   "name": "idx_face_expression_happiness",
+   "sql": "CREATE INDEX idx_face_expression_happiness\n          ON face_expression_v0(happiness_score DESC);"
+  },
+  {
+   "name": "idx_face_person",
+   "sql": "CREATE INDEX idx_face_person ON face(person_id);"
+  },
+  {
+   "name": "idx_fi_asset",
+   "sql": "CREATE INDEX idx_fi_asset ON face_instance_v0(asset_id);"
+  },
+  {
+   "name": "idx_fi_person",
+   "sql": "CREATE INDEX idx_fi_person ON face_instance_v0(person_id);"
+  },
+  {
+   "name": "idx_file_asset",
+   "sql": "CREATE INDEX idx_file_asset ON media_file(asset_id);"
+  },
+  {
+   "name": "idx_file_quick_hash",
+   "sql": "CREATE INDEX idx_file_quick_hash ON media_file(byte_size,quick_hash);"
+  },
+  {
+   "name": "idx_review_pending",
+   "sql": "CREATE INDEX idx_review_pending ON review_task(status,priority DESC);"
+  },
+  {
+   "name": "idx_ucm_asset",
+   "sql": "CREATE INDEX idx_ucm_asset ON user_category_member_v0(asset_id);"
+  }
+ ]
+}

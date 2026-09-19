@@ -1,0 +1,25 @@
+# ============================================================
+# 家庭回忆相册 MVP — Python 依赖清单（2026-09-04 补建）
+# 运行环境：Python 3.12（server.py 当前由 uv 管理的 cpython-3.12.12 运行）
+# ============================================================
+
+# ---- 核心服务 server.py ----
+# server.py 本体【零硬性第三方依赖】，全部基于标准库（http.server / sqlite3 / subprocess）。
+# 唯一软依赖：PyYAML —— 仅用于读取 DeepSeek API 凭证（server.py:92 条件 import，
+# 未安装时自动跳过、不影响主服务）；caption_days.py 也需要它。
+PyYAML>=6.0
+
+# ---- 人脸管线脚本（backfill_faces_full.py / cross_device_verify.py /
+#      manual_face_create.py / recurring_faces.py）----
+# 注意：这些脚本跑在独立环境，不在 server.py 同一解释器（server 进程的 Python 里并未安装它们）。
+opencv-python>=4.8
+numpy>=1.26
+
+# ============================================================
+# 系统级依赖（非 pip，需另行安装/确认）：
+#   - ffmpeg    视频转码、抽帧、封面生成（server.py 转码管线）
+#   - exiftool  EXIF 元数据读取（拍摄时间、GPS）
+#   - sips      macOS 自带图片转码（无需安装）
+#   - Ollama    本地 LLM/VLM 服务，默认 http://127.0.0.1:11434
+#               （DeepSeek API 为云端兜底，凭证文件见 server.py 顶部 CRED_FILE）
+# ============================================================

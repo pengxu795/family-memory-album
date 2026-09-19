@@ -1,0 +1,30 @@
+build/
+dist/
+*.dmg
+__pycache__/
+*.pyc
+*.bak*
+.*.*!
+*.bak.
+
+releases/*.dmg
+releases/*.tar.gz
+bundle_bin/ffmpeg
+baked_models/*
+!baked_models/.gitkeep
+
+# ===== 2026-09-19 开源发布补充 =====
+.DS_Store
+**/.DS_Store
+.workbuddy/
+_snapshots/
+logs/
+data/
+!data/.gitkeep
+*.jsonl
+releases/
+!baked_models/.gitkeep
+
+# 本地测试库不入库
+*.db
+!schema_raw.json

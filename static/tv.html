@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>家庭回忆相册 · 电视</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; background: #000; color: #f0f0ee;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    overflow: hidden; }
+  body { display: none; }
+  body.ready { display: block; }
+  .view { position: absolute; inset: 0; display: none; flex-direction: column; }
+  .view.on { display: flex; }
+
+  /* ---- 登录 ---- */
+  #login { align-items: center; justify-content: center; }
+  #login .card { width: 420px; background: #131314; border-radius: 16px; padding: 36px 32px; }
+  #login h1 { font-size: 26px; margin-bottom: 6px; }
+  #login p { color: #8a8a87; font-size: 14px; margin-bottom: 22px; }
+  #login input { width: 100%; padding: 14px; margin-bottom: 14px; font-size: 18px;
+    border-radius: 10px; border: 2px solid #2b241a; background: #14100b; color: #f0f0ee; outline: none; }
+  .focusable { cursor: pointer; }
+  .focusable.focused { outline: 3px solid #dbf059; outline-offset: 3px; border-radius: 10px; }
+  #login .err { color: #ff6b6b; font-size: 14px; min-height: 20px; margin-top: 10px; }
+
+  /* ---- 首页 ---- */
+  #home { padding: 28px 40px; }
+  .tabs { display: flex; gap: 18px; margin-bottom: 24px; }
+  .tab { padding: 12px 30px; font-size: 22px; border-radius: 12px; background: #131314; color: #aab; }
+  .tab.on { background: #131314; color: #fff; }
+  .chips { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; max-height: 120px; overflow: hidden; }
+  .chip { padding: 8px 20px; font-size: 18px; border-radius: 999px; background: #131314; color: #99a; }
+  .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 14px; overflow-y: auto; flex: 1; padding-bottom: 20px; }
+  .cell { position: relative; border-radius: 10px; overflow: hidden; background: #131314;
+    aspect-ratio: 1; }
+  .cell img, .cell .vtag { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cell .vtag { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.65);
+    font-size: 12px; padding: 2px 8px; border-radius: 6px; }
+  .cell.focused { outline: 4px solid #dbf059; outline-offset: -4px; transform: scale(1.04); z-index: 2; }
+  .hint { position: fixed; bottom: 12px; left: 40px; color: #6b6b6b; font-size: 13px; }
+
+  /* ---- 大图 ---- */
+  #viewer { background: #000; align-items: center; justify-content: center; }
+  #viewer img, #viewer video { max-width: 100vw; max-height: 100vh; object-fit: contain; }
+  #vinfo { position: fixed; top: 0; left: 0; right: 0; padding: 18px 40px;
+    background: linear-gradient(rgba(0,0,0,.85), transparent); font-size: 18px;
+    display: none; z-index: 5; }
+  #vinfo.on { display: block; }
+  #vcount { position: fixed; bottom: 14px; right: 30px; color: #797979; font-size: 16px; z-index: 5; }
+</style>
+<link rel="stylesheet" href="/theme.css?v=06">
+<link rel="stylesheet" href="/ui.css?v=2">
+</head>
+<body>
+
+<div class="view on" id="login">
+  <div class="card">
+    <h1>家庭回忆相册 · 电视</h1>
+    <p>用遥控器输入账号登录（建议使用访客/家人账号）</p>
+    <input class="focusable" id="lu" type="text" placeholder="用户名">
+    <input class="focusable" id="lp" type="password" placeholder="密码">
+    <div class="err" id="lerr"></div>
+  </div>
+</div>
+
+<div class="view" id="home">
+  <div class="tabs" id="tabs"></div>
+  <div class="chips" id="chips"></div>
+  <div class="grid" id="grid"></div>
+  <div class="hint">↑↓←→ 移动 · OK 确认 · 返回键 回退</div>
+</div>
+
+<div class="view" id="viewer">
+  <div id="vinfo"></div>
+  <div id="vmedia" style="display:contents"></div>
+  <div id="vcount"></div>
+</div>
+
+<script>
+"use strict";
+/* ===================== 电视端只读浏览（施工图#10）=====================
+   链路全部走 #9 只读白名单：/api/categories、/api/category、/api/people、
+   /api/auth/login|me；图片 /thumb /preview，视频 /orig。
+   凭证：?token= 或登录后存 localStorage，所有请求与图片 URL 都带 token
+   （电视 webview 常不持久化 Cookie，URL token 是主通道）。 */
+
+const qs = new URLSearchParams(location.search);
+let TOKEN = qs.get("token") || localStorage.getItem("ff_token") || "";
+
+function saveToken(t) { TOKEN = t; localStorage.setItem("ff_token", t); }
+function withToken(u) {
+  if (!TOKEN) return u;
+  return u + (u.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN);
+}
+async function api(path, body) {
+  const r = await fetch(withToken(path), {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body || {})
+  });
+  if (r.status === 401) throw new Error("unauthorized");
+  return r.json();
+}
+function thumbUrl(id, edge) { return withToken(`/thumb?asset=${encodeURIComponent(id)}&edge=${edge || 480}`); }
+function previewUrl(id) { return withToken(`/preview?asset=${encodeURIComponent(id)}`); }
+function origUrl(id) { return withToken(`/orig?asset=${encodeURIComponent(id)}`); }
+
+/* ---------------- 视图与状态 ---------------- */
+const VIEWS = ["login", "home", "viewer"];
+let view = "login";
+let TABS = [
+  { key: "latest", label: "最近", chips: null },
+  { key: "year", label: "年份" },
+  { key: "location", label: "地点" },
+  { key: "person", label: "人物" },
+];
+let curTab = "latest", curChip = "", gridItems = [], gridOffset = 0, gridHasMore = false;
+let viewerIdx = 0;
+
+function show(name) {
+  view = name;
+  VIEWS.forEach(v => document.getElementById(v).classList.toggle("on", v === name));
+  document.body.classList.add("ready");
+  refocus();
+}
+
+/* ---------------- D-pad 空间导航 ---------------- */
+function focusables() {
+  const vs = document.getElementById(view);
+  return [...vs.querySelectorAll(".focusable")].filter(el => el.offsetParent !== null);
+}
+let focusIdx = 0;
+function refocus() {
+  const list = focusables();
+  if (!list.length) return;
+  focusIdx = Math.min(focusIdx, list.length - 1);
+  list.forEach(el => el.classList.remove("focused"));
+  list[focusIdx].classList.add("focused");
+  list[focusIdx].scrollIntoView({ block: "nearest" });
+}
+function moveFocus(dir) {
+  const list = focusables();
+  if (!list.length) return;
+  const cur = list[focusIdx];
+  const cx = cur.offsetLeft + cur.offsetWidth / 2, cy = cur.offsetTop + cur.offsetHeight / 2;
+  let best = -1, bestD = 1e18;
+  list.forEach((el, i) => {
+    if (i === focusIdx) return;
+    const ex = el.offsetLeft + el.offsetWidth / 2, ey = el.offsetTop + el.offsetHeight / 2;
+    const dx = ex - cx, dy = ey - cy;
+    const along = dir === "left" ? -dx : dir === "right" ? dx : dir === "up" ? -dy : dy;
+    const cross = (dir === "left" || dir === "right") ? Math.abs(dy) : Math.abs(dx);
+    if (along > 10 && cross < Math.max(along, 120) + 140) {
+      const d = along + cross * 2;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+  });
+  if (best >= 0) { focusIdx = best; refocus(); }
+}
+
+async function activate(el) {
+  if (el.id === "lu" || el.id === "lp") return; // 输入框交给系统 IME
+  if (el.classList.contains("tab")) return selectTab(el.dataset.key);
+  if (el.classList.contains("chip")) {
+    if (el.dataset.value === undefined) return;
+    curChip = el.dataset.value;
+    [...el.parentNode.children].forEach(c => c.style.background = "");
+    el.style.background = "#131314";
+    return loadGrid(true);
+  }
+  if (el.classList.contains("cell")) return openViewer(parseInt(el.dataset.idx, 10));
+  if (el.id === "more") return loadGrid(false);
+  if (el.id === "vmedia") togglePlay();
+}
+function togglePlay() {
+  const v = document.querySelector("#vmedia video");
+  if (v) (v.paused ? v.play() : v.pause());
+}
+
+document.addEventListener("keydown", async (ev) => {
+  const k = ev.key;
+  if (view === "login") {
+    if (k === "ArrowDown" || k === "ArrowUp") { moveFocus(k === "ArrowDown" ? "down" : "up"); ev.preventDefault(); }
+    else if (k === "Enter") {
+      const el = focusables()[focusIdx];
+      if (el === document.getElementById("lp") || el === document.getElementById("lu") && document.getElementById("lp").value) return doLogin();
+    }
+    return;
+  }
+  if (k === "ArrowLeft") { moveFocus("left"); ev.preventDefault(); }
+  else if (k === "ArrowRight") { moveFocus("right"); ev.preventDefault(); }
+  else if (k === "ArrowUp") { moveFocus("up"); ev.preventDefault(); }
+  else if (k === "ArrowDown") { moveFocus("down"); ev.preventDefault(); }
+  else if (k === "Enter") { activate(focusables()[focusIdx]); ev.preventDefault(); }
+  else if (k === "Escape" || k === "GoBack" || k === "BrowserBack") {
+    ev.preventDefault();
+    if (view === "viewer") { stopViewer(); show("home"); }
+    else if (view === "home" && curChip) { curChip = ""; renderChips(); }
+  }
+});
+
+/* ---------------- 登录 ---------------- */
+async function boot() {
+  try {
+    const r = await fetch(withToken("/api/auth/me"));   // GET 路由
+    const me = await r.json();
+    if (me.user) return enterHome();
+  } catch (e) { /* unauthorized → 登录页 */ }
+  show("login");
+}
+async function doLogin() {
+  const u = document.getElementById("lu").value.trim();
+  const p = document.getElementById("lp").value;
+  const err = document.getElementById("lerr");
+  if (!u || !p) { err.textContent = "请输入用户名和密码"; return; }
+  err.textContent = "登录中…";
+  try {
+    const r = await fetch("/api/auth/login", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ username: u, password: p, remember: true })
+    });
+    const d = await r.json();
+    if (r.ok && d.ok) { saveToken(d.token); enterHome(); }
+    else err.textContent = d.error || "登录失败";
+  } catch (e) { err.textContent = "网络错误"; }
+}
+document.getElementById("lp").addEventListener("keydown", ev => { if (ev.key === "Enter") doLogin(); });
+
+/* ---------------- 首页 ---------------- */
+async function enterHome() {
+  show("home");
+  await renderTabs();
+  await loadGrid(true);
+}
+async function renderTabs() {
+  const tabs = document.getElementById("tabs");
+  tabs.innerHTML = "";
+  for (const t of TABS) {
+    const el = document.createElement("div");
+    el.className = "tab focusable" + (t.key === curTab ? " on" : "");
+    el.dataset.key = t.key; el.textContent = t.label;
+    el.onclick = () => selectTab(t.key);
+    tabs.appendChild(el);
+  }
+  await renderChips();
+  focusIdx = 0; refocus();
+}
+async function renderChips() {
+  const box = document.getElementById("chips");
+  box.innerHTML = "";
+  const tab = TABS.find(t => t.key === curTab);
+  document.getElementById("chips").style.display = tab.chips === null ? "none" : "flex";
+  if (tab.chips === null) return;
+  let chips = [];
+  try {
+    if (curTab === "person") {
+      const people = await api("/api/people", {});
+      // get_people_payload 返回 {people:[...], candidates:[...]}（见服务端）
+      const list = people.people || [];
+      chips = list.filter(p => p.asset_count > 0).map(p => ({ value: p.display_name, label: `${p.display_name} (${p.asset_count})` }));
+    } else {
+      const cats = await api("/api/categories", {});
+      const arr = cats[curTab] || [];
+      chips = arr.map(x => ({
+        value: String(x.year || x.region || x.province || x.tag || x.name || ""),
+        label: `${x.year || x.region || x.province || x.tag || x.name || ""} (${x.count})`
+      })).filter(c => c.value);
+    }
+  } catch (e) { /* 维度拉取失败不阻塞浏览 */ }
+  for (const c of chips.slice(0, 40)) {
+    const el = document.createElement("div");
+    el.className = "chip focusable";
+    el.dataset.value = c.value; el.textContent = c.label;
+    if (c.value === curChip) el.style.background = "#131314";
+    el.onclick = () => activate(el);
+    box.appendChild(el);
+  }
+}
+async function selectTab(key) {
+  curTab = key; curChip = "";
+  await renderTabs();
+  await loadGrid(true);
+}
+async function loadGrid(reset) {
+  if (reset) { gridOffset = 0; gridItems = []; }
+  const body = { cat: curTab, offset: gridOffset, limit: 56 };
+  if (curChip) body.value = curChip;
+  let d;
+  try { d = await api("/api/category", body); }
+  catch (e) { if (e.message === "unauthorized") { show("login"); return; } throw e; }
+  const items = (d.assets || []).filter(a => !a.hidden);
+  gridItems = reset ? items : gridItems.concat(items);
+  gridHasMore = !!d.has_more;
+  gridOffset += items.length;
+  renderGrid();
+}
+function renderGrid() {
+  const g = document.getElementById("grid");
+  g.innerHTML = "";
+  gridItems.forEach((a, i) => {
+    const cell = document.createElement("div");
+    cell.className = "cell focusable"; cell.dataset.idx = i;
+    const img = document.createElement("img");
+    img.loading = "lazy"; img.src = thumbUrl(a.id, 480);
+    cell.appendChild(img);
+    if (a.type === "video") { const t = document.createElement("div"); t.className = "vtag"; t.textContent = "视频"; cell.appendChild(t); }
+    cell.onclick = () => activate(cell);
+    g.appendChild(cell);
+  });
+  if (gridHasMore) {
+    const more = document.createElement("div");
+    more.className = "cell focusable"; more.id = "more";
+    more.textContent = "更多…";
+    more.style.display = "grid"; more.style.placeItems = "center"; more.style.fontSize = "20px"; more.style.color = "#889";
+    more.onclick = () => activate(more);
+    g.appendChild(more);
+  }
+  focusIdx = 0; refocus();
+}
+
+/* ---------------- 大图查看 ---------------- */
+async function openViewer(idx) {
+  viewerIdx = idx;
+  show("viewer");
+  await renderViewer();
+}
+async function renderViewer() {
+  const a = gridItems[viewerIdx];
+  const m = document.getElementById("vmedia");
+  document.getElementById("vcount").textContent = `${viewerIdx + 1} / ${gridItems.length}`;
+  if (a.type === "video") {
+    m.innerHTML = `<video class="focusable" src="${origUrl(a.id)}" controls autoplay playsinline></video>`;
+  } else {
+    m.innerHTML = `<img class="focusable" src="${previewUrl(a.id)}" alt="">`;
+  }
+  focusIdx = 0; refocus();
+  try {
+    const info = await fetch(withToken(`/api/asset_info?asset=${encodeURIComponent(a.id)}`)).then(r => r.json());
+    const bits = [info.time, info.region, (info.persons || []).join("、"), (info.tags || []).slice(0, 4).join(" ")].filter(Boolean);
+    const el = document.getElementById("vinfo");
+    el.textContent = bits.join(" · ");
+    el.classList.add("on");
+    setTimeout(() => el.classList.remove("on"), 5000);
+  } catch (e) { /* 信息条失败不阻塞 */ }
+}
+function stopViewer() {
+  const v = document.querySelector("#vmedia video");
+  if (v) v.pause();
+  document.getElementById("vmedia").innerHTML = "";
+}
+document.addEventListener("keydown", (ev) => {
+  if (view !== "viewer") return;
+  if (ev.key === "ArrowLeft" && viewerIdx > 0) { viewerIdx--; renderViewer(); ev.preventDefault(); }
+  else if (ev.key === "ArrowRight" && viewerIdx < gridItems.length - 1) { viewerIdx++; renderViewer(); ev.preventDefault(); }
+});
+
+boot();
+</script>
+<script src="offline-guard.js"></script>
+</body>
+</html>

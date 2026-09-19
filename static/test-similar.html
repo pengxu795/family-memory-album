@@ -1,0 +1,65 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>相似照片切换测试</title>
+<style>body{font-family:-apple-system,sans-serif;padding:30px;background:#f4f4f2;color:#131314}
+h2{font-size:16px;margin:0 0 14px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+.thumb{width:80px;height:80px;background:#e8e8e4;border:3px solid transparent;cursor:pointer;overflow:hidden;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#888;text-align:center;padding:4px}
+.thumb.best{border-color:#e5484d;opacity:1}
+.thumb:not(.best){opacity:.55}
+.thumb:hover{transform:translateY(-2px);box-shadow:0 4px 12px #00000020}
+pre{background:#131314;color:#9cdcfe;padding:14px;border-radius:8px;font-size:11px;overflow:auto;max-height:200px}
+.ok{color:#30a46c}.err{color:#e5484d}</style>
+</head><body>
+<h2>测试：相似照片切换最佳（独立验证）</h2>
+<div id="notice">点击下方任意小图，应该立刻变红框+满色、上方 notice 显示 "已切换为最佳"</div>
+<div id="row" class="row"></div>
+<h2>诊断日志</h2>
+<pre id="log"></pre>
+<script>
+const log=document.getElementById('log');
+function L(s,c){const t=new Date().toISOString().slice(11,23);const el=document.createElement('div');el.innerHTML=`[${t}] ${c?'<span class="'+c+'">'+s+'</span>':s}`;log.appendChild(el);console.log(s)}
+window.addEventListener('error',e=>L('JS ERR: '+e.message+(e.filename?' @'+e.filename+':'+e.lineno:''),'err'));
+window.addEventListener('unhandledrejection',e=>L('Promise REJECT: '+(e.reason&&e.reason.message||e.reason),'err'));
+
+(async()=>{
+  L('页面加载');
+  // 拉真实分组
+  const d=await fetch('/api/similar/list',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.json()).catch(e=>{L('拉 list 失败:'+e.message,'err');return{groups:[]}});
+  L('拉到 '+d.groups.length+' 组');
+  if(!d.groups.length){document.getElementById('notice').textContent='无分组，请先到侧栏扫描';return}
+  const g=d.groups[0];
+  L('用第 1 组：'+g.id+'，'+g.members.length+' 张，best='+g.best_asset_id);
+  // 渲染
+  const row=document.getElementById('row');
+  g.members.forEach((m,i)=>{
+    const t=document.createElement('div');
+    t.className='thumb'+(m.is_best?' best':'');
+    t.dataset.gid=g.id;
+    t.dataset.aid=m.asset_id;
+    t.title='分数 '+m.pick_score.toFixed(2);
+    t.innerHTML=`<img src="/thumb?asset=${m.asset_id}&edge=240" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">`;
+    row.appendChild(t);
+  });
+  // 委托
+  row.addEventListener('click',async e=>{
+    const t=e.target.closest('.thumb');
+    if(!t)return;
+    if(t.classList.contains('best')){L('已是 best，不调接口','ok');return}
+    const gid=t.dataset.gid,aid=t.dataset.aid;
+    L('点击小图 → 调 set-best: '+gid+' / '+aid);
+    // 视觉立即反馈
+    row.querySelectorAll('.thumb').forEach(x=>x.classList.remove('best'));
+    t.classList.add('best');
+    try{
+      const r=await fetch('/api/similar/set-best',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:gid,asset_id:aid})});
+      const txt=await r.text();
+      L('set-best 响应: HTTP '+r.status+' '+txt,'ok');
+      document.getElementById('notice').innerHTML='<span class="ok">已切换为最佳（aid='+aid+'）</span>';
+    }catch(err){
+      L('set-best 异常: '+err.message,'err');
+      document.getElementById('notice').innerHTML='<span class="err">失败：'+err.message+'</span>';
+    }
+  });
+  L('委托绑定完成，可以点击测试');
+})();
+</script>
+</body></html>

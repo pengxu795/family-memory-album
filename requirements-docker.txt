@@ -1,0 +1,24 @@
+# ============================================================
+# 家庭回忆相册 — 容器内 Python 依赖（施工图#7）
+# 基础镜像 python:3.12-slim（锁 3.12：server.py 顶层 import 的 cgi 在 3.13 已移除）
+# 全部为官方 manylinux wheel，amd64 / arm64 双架构可直接安装
+# ============================================================
+
+# ---- 核心服务 ----
+PyYAML>=6.0          # DeepSeek 凭证文件解析（条件 import，缺了也不挡启动）
+pillow>=10.0         # 图片解码/缩略图（容器内无 sips，全靠 Pillow）
+pillow-heif>=0.13    # iPhone HEIC 解码（wheel 内置 libheif，无需系统库）
+
+# ---- 人脸管线（backfill_faces_full.py 经 FACES_PYTHON 子进程拉起）----
+numpy>=1.26
+opencv-python-headless>=4.8   # 无 GUI 依赖版；aarch64 官方 wheel 自 4.5.4 起提供
+# AdaFace/SFace 识别用 ort.InferenceSession 跑 onnx（face_backends.py 惰性 import），
+# 缺它容器内新建人脸后端直接崩——2026-09-10 容器实测补上
+onnxruntime>=1.17
+
+# ---- 可选：SigLIP 语义检索（默认不装，装了镜像 +1.5GB）----
+# 语义检索/物品搜索跑在 SIGLIP_PYTHON 指向的子进程解释器里，需要 torch+transformers。
+# 默认探针探不到 torch → 前端显示"离线"，其余功能（人脸/地图/过滤/去重）不受影响。
+# 要在容器/NAS 上启用 CPU 语义检索时再放开下面两行并在 compose 设 SIGLIP_PYTHON=python3：
+# torch>=2.2
+# transformers>=4.44

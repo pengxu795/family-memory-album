@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 与任务 · 家庭回忆相册</title>
+<script>if(location.protocol==='file:')location.replace('http://localhost:8788/models.html');</script>
+<!-- theme.css 只作基础层，必须在页面自有样式之前加载，否则它的六色令牌会盖掉本页配色 -->
+<link rel="stylesheet" href="/theme.css?v=06">
+<style>
+/* ══════════════════════════════════════════════════════════════════
+   设计定调 ·「暖纸 + 琥珀」极简
+   ──────────────────────────────────────────────────────────────────
+   受众：普通家庭成员（非技术用户），不是工程师
+   调性：极致极简 —— 大留白、单一强调色、精确间距
+   记忆点：每张卡片都带一句「这是干什么的」人话注解
+   VI 换向：冷灰 #ebebe9 + 电蓝 #2f31f5  →  暖纸 #f6f4f0 + 琥珀 #b4531f
+   约束：纯离线可用，零外部字体请求，中文优先字体栈
+   ══════════════════════════════════════════════════════════════════ */
+
+:root{
+  /* ---- 色彩（语义令牌，组件内不出现硬编码色值）---- */
+  --bg:#f6f4f0;          /* 暖纸底 */
+  --surface:#ffffff;     /* 卡片面 */
+  --surface-2:#faf8f5;   /* 次级面 */
+  --ink:#1b1a17;         /* 暖近黑（不用纯黑压纯白） */
+  --ink-2:#4a4740;       /* 正文次级 */
+  --muted:#8a857c;       /* 注释 */
+  --line:#e8e4dd;        /* 发丝线 */
+  --line-2:#d9d4ca;      /* 控件描边 */
+  --accent:#b4531f;      /* 单一强调色：琥珀（只留给关键动作与"运行中"） */
+  --accent-soft:#fbf0e7;
+  --ok:#2f7d4f;
+  --ok-soft:#edf6f0;
+  --off:#aaa49b;
+
+  /* ---- 字阶（模块化，禁止临时手写数值）---- */
+  --fs-xs:12px; --fs-sm:13px; --fs-body:14px; --fs-lg:16px;
+  --fs-xl:20px; --fs-2xl:26px; --fs-3xl:34px;
+
+  /* ---- 间距梯度 ---- */
+  --sp1:4px; --sp2:8px; --sp3:12px; --sp4:16px;
+  --sp5:24px; --sp6:32px; --sp7:48px; --sp8:72px;
+
+  /* ---- 圆角 / 阴影 / 动效 ---- */
+  --radius-sm:8px; --radius:14px; --radius-lg:20px;
+  --sh1:0 1px 2px rgba(27,26,23,.05);
+  --sh2:0 6px 20px rgba(27,26,23,.07);
+  --ease:cubic-bezier(.16,1,.3,1);
+  --t-fast:160ms; --t-base:320ms;
+
+  --font:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Source Han Sans SC","Noto Sans CJK SC",sans-serif;
+}
+
+*{ margin:0; padding:0; box-sizing:border-box; }
+body{
+  font-family:var(--font); background:var(--bg); color:var(--ink);
+  font-size:var(--fs-body); line-height:1.75; letter-spacing:.01em;
+  -webkit-font-smoothing:antialiased; min-height:100vh;
+}
+/* ---- 氛围层：顶部暖光 + 极淡颗粒（不抢内容）---- */
+body::before{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+  background:
+    radial-gradient(48rem 30rem at 8% -12%, rgba(180,83,31,.10), transparent 62%),
+    radial-gradient(40rem 26rem at 100% 2%, rgba(122,140,110,.09), transparent 58%);
+}
+body::after{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:0; opacity:.035;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ══════════ 基础控件 ══════════ */
+button{
+  font-family:inherit; font-size:var(--fs-sm); cursor:pointer;
+  border:1px solid var(--line-2); background:var(--surface); color:var(--ink);
+  min-height:38px; padding:0 14px; border-radius:var(--radius-sm);
+  transition:border-color var(--t-fast) ease-out, background var(--t-fast) ease-out,
+             transform var(--t-fast) ease-out;
+}
+button:hover:not(:disabled){ border-color:var(--ink-2); }
+button:active:not(:disabled){ transform:translateY(1px); }
+button.primary{ background:var(--accent); border-color:var(--accent); color:#fff; }
+button.primary:hover:not(:disabled){ background:#9c4619; border-color:#9c4619; }
+button.danger{ color:#a5352f; border-color:#e9d6d3; }
+button.danger:hover:not(:disabled){ border-color:#c76a62; }
+button:disabled{ opacity:.45; cursor:not-allowed; }
+:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+input, select{
+  font-family:inherit; font-size:var(--fs-sm); color:var(--ink);
+  padding:9px 11px; min-height:40px; width:100%;
+  border:1px solid var(--line-2); border-radius:var(--radius-sm); background:var(--surface);
+}
+input:focus, select:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+input::placeholder{ color:#b6b0a6; }
+input[type=checkbox]{ width:auto; min-height:0; }
+
+/* ══════════ 页头 ══════════ */
+header.top{
+  position:sticky; top:0; z-index:10;
+  display:flex; align-items:center; gap:var(--sp4);
+  padding:var(--sp3) var(--sp6);
+  background:rgba(246,244,240,.86); backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--line);
+}
+header.top .back{
+  font-size:var(--fs-sm); color:var(--ink-2); text-decoration:none;
+  padding:8px 2px; transition:color var(--t-fast) ease-out;
+}
+header.top .back:hover{ color:var(--accent); }
+header.top .spacer{ flex:1; }
+header.top .refresh{ font-size:var(--fs-xs); color:var(--muted); }
+
+main{ position:relative; z-index:2; max-width:880px; margin:0 auto; padding:0 var(--sp6) var(--sp8); }
+
+/* ══════════ 页面标题区（大字号 = VI 变化主轴）══════════ */
+.page-head{ padding:var(--sp7) 0 var(--sp6); }
+.page-head h1{ font-size:var(--fs-3xl); font-weight:700; letter-spacing:-.01em; line-height:1.2; }
+.page-head .lede{ margin-top:var(--sp3); font-size:var(--fs-body); color:var(--ink-2); max-width:44ch; }
+.page-head .lede b{ color:var(--ink); font-weight:600; }
+
+/* ══════════ 区块（编号 + 标题 + 一句话说明）══════════ */
+.block{ margin-bottom:var(--sp7); }
+.block-head{ display:flex; gap:var(--sp4); align-items:flex-start; margin-bottom:var(--sp4); }
+.block-head .idx{
+  font-size:var(--fs-xs); font-weight:700; color:var(--accent);
+  letter-spacing:.14em; padding-top:5px; flex:none;
+}
+.block-head h2{ font-size:var(--fs-xl); font-weight:700; letter-spacing:-.01em; line-height:1.3; }
+.block-head .lede{ font-size:var(--fs-sm); color:var(--muted); margin-top:2px; max-width:52ch; }
+
+/* ══════════ 卡片（左侧状态竖线 = 记忆点之一）══════════ */
+.cards{ display:grid; gap:var(--sp4); grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); }
+.card{
+  position:relative; background:var(--surface);
+  border:1px solid var(--line); border-radius:var(--radius);
+  padding:var(--sp5);
+  box-shadow:var(--sh1);
+  animation:rise var(--t-base) var(--ease) both;
+  transition:box-shadow var(--t-base) var(--ease), transform var(--t-base) var(--ease);
+}
+.card:hover{ box-shadow:var(--sh2); }
+.card::before{
+  content:""; position:absolute; left:0; top:var(--sp5); bottom:var(--sp5);
+  width:3px; border-radius:0 3px 3px 0; background:var(--off);
+}
+.card.s-on::before{ background:var(--ok); }
+.card.s-off::before{ background:var(--off); }
+.card.s-run::before{ background:var(--accent); animation:breathe 1.6s ease-in-out infinite; }
+/* 入场错峰：一次编排好的序列，胜过零散微交互 */
+.cards > .card:nth-child(2){ animation-delay:70ms; }
+.cards > .card:nth-child(3){ animation-delay:140ms; }
+.cards > .card:nth-child(4){ animation-delay:210ms; }
+.cards > .card:nth-child(5){ animation-delay:280ms; }
+
+.card-top{ display:flex; align-items:center; gap:var(--sp3); margin-bottom:var(--sp2); }
+.card-top .name{
+  font-size:var(--fs-lg); font-weight:600; flex:1; min-width:0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.card-what{ font-size:var(--fs-sm); color:var(--ink-2); margin-bottom:var(--sp2); }
+.card-note{ font-size:var(--fs-sm); color:var(--muted); line-height:1.7; }
+.card-note + .card-note{ margin-top:4px; }
+.actions{ display:flex; flex-wrap:wrap; gap:var(--sp2); margin-top:var(--sp4); align-items:center; }
+
+.pill{
+  font-size:var(--fs-xs); font-weight:500; padding:2px 10px;
+  border-radius:999px; white-space:nowrap; flex:none;
+}
+.pill-on{ background:var(--ok-soft); color:var(--ok); }
+.pill-run{ background:var(--accent-soft); color:var(--accent); }
+.pill-off{ background:#f2f0ec; color:var(--muted); }
+.pill-info{ background:var(--surface-2); color:var(--ink-2); border:1px solid var(--line); }
+
+/* 进度条与数字（等宽数字，避免跳动） */
+.bar{ height:6px; border-radius:999px; background:#f0ede8; overflow:hidden; margin:var(--sp3) 0 var(--sp2); }
+.bar > i{ display:block; height:100%; border-radius:999px; background:var(--accent); transition:width var(--t-base) var(--ease); }
+.pct{ font-size:var(--fs-xs); color:var(--muted); font-variant-numeric:tabular-nums; }
+.last{ font-size:var(--fs-xs); color:var(--muted); margin-top:var(--sp2); font-variant-numeric:tabular-nums; }
+
+/* 开关（保留原有结构，只换外观） */
+.switch{ position:relative; width:42px; height:24px; flex:none; cursor:pointer; }
+.switch input{ opacity:0; width:0; height:0; }
+.switch .track{ position:absolute; inset:0; border-radius:999px; background:#dcd7ce; transition:background var(--t-fast) ease-out; }
+.switch .track::after{
+  content:""; position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:50%;
+  background:#fff; box-shadow:0 1px 3px rgba(27,26,23,.28); transition:transform var(--t-fast) var(--ease);
+}
+.switch input:checked + .track{ background:var(--ok); }
+.switch input:checked + .track::after{ transform:translateX(18px); }
+.swlabel{ font-size:var(--fs-sm); color:var(--muted); }
+
+/* 旧类名兼容（其它渲染函数仍在用） */
+.badge{ display:inline-block; font-size:var(--fs-xs); padding:2px 9px; border-radius:999px; margin-right:6px; }
+.badge.free{ background:var(--ok-soft); color:var(--ok); }
+.badge.paid{ background:var(--surface-2); color:var(--ink-2); border:1px solid var(--line); }
+.badge.vis{ background:var(--accent-soft); color:var(--accent); }
+.resource{ display:inline-block; font-size:var(--fs-xs); padding:1px 8px; border-radius:999px; background:var(--surface-2); color:var(--muted); margin-right:6px; }
+.card .meta{ font-size:var(--fs-sm); color:var(--muted); line-height:1.7; }
+.extra{ font-size:var(--fs-sm); color:var(--muted); line-height:1.7; }
+.plainmeta{ font-size:var(--fs-sm); color:var(--muted); line-height:2.1; }
+.row{ display:flex; align-items:center; gap:var(--sp2); margin-top:var(--sp3); flex-wrap:wrap; }
+
+/* ══════════ 折叠区（添加服务 / 高级设置）══════════ */
+.disclosure{
+  margin-top:var(--sp4); border:1px dashed var(--line-2);
+  border-radius:var(--radius); overflow:hidden;
+}
+.disclosure > summary{
+  list-style:none; cursor:pointer; padding:var(--sp4) var(--sp5);
+  font-size:var(--fs-sm); font-weight:600; color:var(--accent);
+}
+.disclosure > summary::-webkit-details-marker{ display:none; }
+.disclosure > summary:hover{ background:var(--accent-soft); }
+.disclosure[open] > summary{ border-bottom:1px dashed var(--line-2); background:var(--accent-soft); }
+.disclosure-body{ padding:var(--sp5); }
+form.inline{ display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:var(--sp3); margin-top:var(--sp3); }
+.fld{ display:flex; flex-direction:column; gap:6px; }
+.fld label{ font-size:var(--fs-xs); color:var(--muted); }
+.fld .chk{ display:flex; align-items:center; gap:6px; font-size:var(--fs-sm); color:var(--ink-2); padding-top:6px; }
+.hint{ font-size:var(--fs-xs); color:var(--muted); line-height:1.7; }
+.hint b{ color:var(--ink-2); font-weight:600; }
+
+details.sec{ border-top:1px solid var(--line); }
+details.sec > summary{
+  list-style:none; cursor:pointer; display:flex; gap:var(--sp3);
+  align-items:baseline; padding:var(--sp5) 0;
+}
+details.sec > summary::-webkit-details-marker{ display:none; }
+details.sec > summary h2{ font-size:var(--fs-lg); font-weight:600; letter-spacing:normal; color:var(--ink); }
+details.sec > summary .hint{ font-size:var(--fs-sm); color:var(--muted); }
+details.sec > summary::after{ content:"展开"; margin-left:auto; font-size:var(--fs-xs); color:var(--accent); flex:none; }
+details.sec[open] > summary::after{ content:"收起"; }
+details.sec > summary:hover h2{ color:var(--accent); }
+details.sec > .secbody{ padding-bottom:var(--sp6); }
+
+/* ══════════ 资源冲突提示 ══════════ */
+.conflicts{
+  display:none; margin-bottom:var(--sp5); padding:var(--sp4) var(--sp5);
+  border-radius:var(--radius); background:var(--accent-soft); border:1px solid #efdccd;
+}
+.conflicts.show{ display:block; }
+.conflicts b{ display:block; font-size:var(--fs-sm); color:var(--accent); margin-bottom:var(--sp2); }
+.conflicts li{ font-size:var(--fs-sm); color:var(--ink-2); margin-left:18px; line-height:1.7; }
+
+/* ══════════ 页脚与提示条 ══════════ */
+.foot{
+  margin-top:var(--sp7); padding-top:var(--sp5); border-top:1px solid var(--line);
+  font-size:var(--fs-xs); color:var(--muted); line-height:1.9;
+}
+.foot b{ color:var(--ink-2); font-weight:600; }
+.toast{
+  position:fixed; left:50%; bottom:var(--sp5); transform:translateX(-50%);
+  background:#26241f; color:#f6f4f0; font-size:var(--fs-sm);
+  padding:10px 20px; border-radius:999px; box-shadow:var(--sh2);
+  opacity:0; pointer-events:none; transition:opacity var(--t-fast) ease-out; z-index:50;
+}
+.toast.show{ opacity:.96; }
+.toast.err{ background:var(--accent); }
+
+/* ══════════ 动效与降级 ══════════ */
+@keyframes rise{ from{ opacity:0; transform:translateY(14px); } to{ opacity:1; transform:none; } }
+@keyframes breathe{ 0%,100%{ opacity:1; } 50%{ opacity:.35; } }
+@media (prefers-reduced-motion: reduce){
+  *, *::before, *::after{ animation:none !important; transition:none !important; }
+}
+
+/* ══════════ 响应式（375 / 768 / 1440 三档）══════════ */
+@media (max-width:768px){
+  header.top{ padding:var(--sp3) var(--sp4); }
+  main{ padding:0 var(--sp4) var(--sp7); }
+  .page-head{ padding:var(--sp6) 0 var(--sp5); }
+  .page-head h1{ font-size:var(--fs-2xl); }
+  .cards{ grid-template-columns:1fr; }
+  .block-head{ gap:var(--sp3); }
+}
+</style>
+<!-- 全站统一外观层（直角 + 卡片规格）必须放在本页自有样式之后，才能盖住页面圆角 -->
+<link rel="stylesheet" href="/ui.css?v=2">
+</head>
+<body>
+<header class="top">
+  <a class="back" href="/library.html">← 返回图库</a>
+  <span class="spacer"></span>
+  <span class="refresh" id="refreshTag">每 5 秒自动刷新</span>
+  <button onclick="load();loadLlm();loadObjects()" title="浏览器后台标签会暂停自动刷新，看到旧数据时点这里">刷新</button>
+</header>
+
+<main>
+  <div class="page-head">
+    <h1>AI 与任务</h1>
+    <p class="lede">这是家里 AI 的控制面板。<b>看不懂的地方不用动</b>，保持现状就能正常使用。</p>
+  </div>
+
+  <div class="conflicts" id="conflicts"><b>⚠ 有任务在抢同一份资源</b><ul id="conflictList"></ul></div>
+
+  <section class="block">
+    <div class="block-head">
+      <span class="idx">01</span>
+      <div>
+        <h2>智能服务</h2>
+        <p class="lede">看懂照片内容、按描述搜照片、回答你的提问，都由这里的服务完成。留一个就够用。</p>
+      </div>
+    </div>
+    <div class="cards" id="builtinGrid"></div>
+    <details class="disclosure" id="provBox">
+      <summary>＋ 添加一个新的 AI 服务</summary>
+      <div class="disclosure-body">
+        <p class="hint">把服务商给你的 <b>API 地址</b>粘贴到下面（以 <b>/v1</b> 结尾），再贴上自己的 Key（在服务商网站注册后可得）就行；名称、模型等系统自动识别填好。</p>
+        <form class="inline" onsubmit="return addProvider(event)">
+          <div class="fld" style="grid-column:1/-1"><label>API 地址（粘贴后自动识别服务商）</label><input id="p-url" placeholder="https://api.xx.com/v1" oninput="guessProvider()"><div class="hint" id="p-preset-note" style="margin-top:6px"></div></div>
+          <div class="fld"><label>API Key（服务商给你的密钥）</label><input id="p-key" type="password" placeholder="通常以 sk- 开头"></div>
+          <!-- 2026-09-19 二次简化：名称/模型/免费/能看图全部收进隐藏字段，自动识别填充，用户只填地址和 Key -->
+          <input type="hidden" id="p-name"><input type="hidden" id="p-model"><input type="hidden" id="p-free"><input type="hidden" id="p-vision">
+          <div class="fld"><label>&nbsp;</label><button class="primary" type="submit">添加</button></div>
+        </form>
+        <p class="hint" style="margin-top:var(--sp4)">智谱、通义、Kimi、OpenRouter 等常见服务都能自动识别；没识别出来的按通用格式添加，添加后可点卡片上的「测试」验证、随时编辑。</p>
+      </div>
+    </details>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <span class="idx">02</span>
+      <div>
+        <h2>自动处理</h2>
+        <p class="lede">相册会在后台自动完成这些工作。可以手动跑一次，也可以完全不管它。</p>
+      </div>
+    </div>
+    <div class="cards" id="taskGrid"></div>
+  </section>
+
+  <details class="sec">
+    <summary><h2>高级 · 识别算法偏好</h2><span class="hint">调整识别的严格程度</span></summary>
+    <div class="secbody">
+      <p class="hint" style="margin-bottom:var(--sp4)">这些数值决定 AI 判断的松紧。<b>不改完全不影响使用</b>；遇到"认错人 / 漏认人"再回来微调。</p>
+      <div class="cards" id="algoGrid"></div>
+      <div class="row"><button onclick="resetAlgos()">全部恢复默认</button><span class="swlabel">改动即时生效，下次任务运行时采用</span></div>
+    </div>
+  </details>
+
+  <details class="sec">
+    <summary><h2>高级 · 可搜索的物品</h2><span class="hint">想让搜索认识更多东西就加在这里</span></summary>
+    <div class="secbody">
+      <p class="hint" style="margin-bottom:var(--sp4)">下面这些词可以直接在搜索框里用。内置的已覆盖日常，想搜别的（比如"无人机""乐高"）再自己加。</p>
+      <div id="objBuiltin"></div>
+      <div class="cards" id="objCustom" style="margin-top:var(--sp4)"></div>
+      <details class="disclosure">
+        <summary>＋ 添加一个自定义物品</summary>
+        <div class="disclosure-body">
+          <p class="hint">描述词越多越准，用空格分隔同义词。识别在本机完成，照片不会上传。</p>
+          <form class="inline" onsubmit="return addObject(event)">
+            <div class="fld"><label>物品名称</label><input id="obj-tag" placeholder="如：无人机"></div>
+            <div class="fld"><label>描述词（空格分隔同义词）</label><input id="obj-text" placeholder="如：无人机 航拍 遥控飞机"></div>
+            <div class="fld"><label>&nbsp;</label><button class="primary" type="submit">添加</button></div>
+          </form>
+        </div>
+      </details>
+      <div class="row"><button onclick="rebuildScene()">重新识别全库照片（应用改动）</button></div>
+    </div>
+  </details>
+
+  <p class="foot">
+    调用顺序：按「智能服务」里从上到下排列，前一个失败会自动换下一个。<br>
+    卡片左侧竖线：<b>绿色 = 可用</b> · <b>琥珀色呼吸 = 正在工作</b> · <b>灰色 = 已停用</b>。
+  </p>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+function toast(msg, err) {
+  const t = document.querySelector('#toast');
+  t.textContent = msg; t.className = 'toast show' + (err ? ' err' : '');
+  clearTimeout(t._tm); t._tm = setTimeout(() => t.className = 'toast', 2600);
+}
+async function api(path, body) {
+  // 2026-09-18：首次进页面偶发「Unexpected end of JSON input」——新开连接竞态导致空响应体
+  // （服务端 6 路并发压测全 200 正常）。这里读到空响应就重试一次，基本消除首屏「刷新失败」横幅。
+  const opt = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) };
+  let t = await (await fetch(path, opt)).text();
+  if (!t.trim()) {
+    await new Promise(res => setTimeout(res, 300));
+    t = await (await fetch(path, opt)).text();
+  }
+  try { return JSON.parse(t); } catch (e) { return { error: '响应异常，请点右上角「刷新」' }; }
+}
+
+/* ================= 后台任务卡片 =================
+   面向普通用户：每张卡都配一句「这是干什么的」人话注解（本页的记忆点）。
+   左侧竖线颜色 = 状态（.s-run 琥珀呼吸 / .s-on 绿 / .s-off 灰），由 CSS 控制。 */
+const TASK_TEXT = {
+  faces:    { name:'人脸识别',       what:'找出照片里的家人，认出来就归到 TA 名下，之后可以按人翻照片。' },
+  vlm:      { name:'照片内容描述',   what:'给每张照片写一句内容摘要，这样用一句话就能搜到它。' },
+  scene:    { name:'场景与物品标签', what:'标出照片里有什么（海边、狗、生日蛋糕…），让关键词搜索更准。' },
+  geo:      { name:'拍摄地点核对',   what:'照片没有定位信息时，用画面线索推断大致拍摄地，防止地点标错。' },
+  autoscan: { name:'自动收录新照片', what:'定时查看照片来源，有新照片就自动加进相册。' },
+};
+function taskState(t) {
+  if (t.running)      return { cls:'s-run', pill:'<span class="pill pill-run">正在工作</span>' };
+  if (t.auto_enabled) return { cls:'s-on',  pill:'<span class="pill pill-on">已开启</span>' };
+  return                     { cls:'s-off', pill:'<span class="pill pill-off">已关闭</span>' };
+}
+
+function bar(pct) { return `<div class="bar"><i style="width:${pct}%"></i></div>`; }
+
+function taskCard(t) {
+  const meta = TASK_TEXT[t.key] || { name: t.name, what: '' };
+  const st = taskState(t);
+  let body = '', ops = '';
+  if (t.key === 'faces') {
+    body = bar(t.progress.pct)
+      + `<div class="pct">已处理 ${t.progress.done.toLocaleString()} / ${t.progress.total.toLocaleString()} 张照片（${t.progress.pct}%）</div>`;
+    ops = `<button class="primary" onclick="runFaces()" ${t.running?'disabled':''}>${t.running?'识别中…':'重新识别'}</button>`;
+  } else if (t.key === 'vlm') {
+    body = `<div class="pct">还有 ${t.pending.toLocaleString()} 张没描述 · 已描述 ${t.desc_done.toLocaleString()} 张</div>`;
+    ops = `<button onclick="runVlm()" ${t.running?'disabled':''}>${t.running?'描述中…':'立即描述'}</button>`
+        + `<span class="switch"><input type="checkbox" ${t.auto_enabled?'checked':''} onchange="toggle('vlm_auto',this.checked)"><span class="track"></span></span>`
+        + `<span class="swlabel">自动（每</span><input type="number" min="5" value="${t.auto_interval_min}" onchange="saveVlmInterval(this.value)" style="width:64px"><span class="swlabel">分钟）</span>`;
+    if (t.last_result) body += `<div class="last">上次：${t.last_result}</div>`;
+  } else if (t.key === 'scene') {
+    body = `<div class="pct">已标注 ${t.tags.toLocaleString()} 个标签</div>`;
+    ops = `<button onclick="runScene()">重新识别</button>`;
+  } else if (t.key === 'geo') {
+    body = `<div class="pct">逐日核对拍摄地点</div>`;
+    ops = `<button onclick="runGeo()" ${t.running?'disabled':''}>${t.running?'核对中…':'立即核对'}</button>`;
+  } else if (t.key === 'autoscan') {
+    body = `<div class="pct">有新照片就自动加进来</div>`;
+    ops = `<span class="switch"><input type="checkbox" ${t.auto_enabled?'checked':''} onchange="toggle('autoscan',this.checked)"><span class="track"></span></span>`
+        + `<span class="swlabel">自动（每</span><input type="number" min="15" value="${t.auto_interval_min}" onchange="saveScanInterval(this.value)" style="width:64px"><span class="swlabel">分钟）</span>`;
+    if (t.last_scan_at) body += `<div class="last">上次检查：${t.last_scan_at.slice(0,19).replace('T',' ')} · 新增 ${t.last_indexed||0} 张</div>`;
+  }
+  return `<div class="card ${st.cls}">
+    <div class="card-top"><span class="name">${meta.name}</span>${st.pill}</div>
+    <p class="card-what">${meta.what}</p>
+    ${body}
+    <div class="actions">${ops}</div>
+  </div>`;
+}
+
+function render(d) {
+  // 2026-09-18：本机模型清单（YuNet/SFace/SIGLIP）对普通用户是噪音，已整体下线；
+  // 它们的能力通过「自动处理」里对应的人话任务卡体现。
+  document.querySelector('#taskGrid').innerHTML = d.tasks.map(taskCard).join('');
+  const c = document.querySelector('#conflicts');
+  if (d.conflicts && d.conflicts.length) {
+    c.classList.add('show');
+    document.querySelector('#conflictList').innerHTML = d.conflicts.map(x => `<li>${x}</li>`).join('');
+  } else c.classList.remove('show');
+}
+
+/* ================= API 服务 ================= */
+let _presets = [];
+// 2026-09-19 简化：去掉「选择服务商」下拉，改为粘贴 API 地址自动识别（按域名匹配内置预设）。
+// 2026-09-19 二次简化：名称/模型/免费/能看图全部改为隐藏字段自动填，用户只填地址（和 Key）。
+function guessProvider() {
+  const note = document.querySelector('#p-preset-note');
+  const raw = document.querySelector('#p-url').value.trim();
+  if (!raw) { note.textContent = ''; return; }
+  let host = '';
+  try { host = new URL(raw.includes('://') ? raw : 'https://' + raw).hostname.toLowerCase(); }
+  catch (e) { note.textContent = ''; return; }
+  const hit = _presets.find(p => {
+    try {
+      const h = new URL(p.base_url).hostname.toLowerCase();
+      return host === h || host.endsWith('.' + h) || h.endsWith('.' + host);
+    } catch (e) { return false; }
+  });
+  if (!hit) {
+    // 未识别：按通用 OpenAI 兼容格式兜底（添加后可编辑/测试）
+    document.querySelector('#p-name').value = host;
+    document.querySelector('#p-model').value = 'gpt-4o-mini';
+    document.querySelector('#p-free').value = '';
+    document.querySelector('#p-vision').value = '1';
+    note.textContent = '未识别出常见服务商——已按通用格式自动填好，添加后点「测试」验证即可。';
+    return;
+  }
+  document.querySelector('#p-name').value = hit.name;
+  document.querySelector('#p-model').value = hit.model;
+  document.querySelector('#p-free').value = hit.free ? '1' : '';
+  document.querySelector('#p-vision').value = hit.vision ? '1' : '';
+  note.textContent = '✓ 已识别：' + hit.name + (hit.note ? '（' + hit.note + '）' : '');
+}
+
+let _editingProv = null;   // 正在编辑的 provider_id（编辑中暂停自动重渲染，避免表单被冲掉）
+function editProvider(id) { _editingProv = id; loadLlm(); }
+function cancelEditProv() { _editingProv = null; loadLlm(); }
+async function saveProvider(e, id) {
+  e.preventDefault();
+  const val = q => document.querySelector('#' + q).value.trim();
+  const r = await api('/api/llm/provider', {
+    action: 'edit', provider_id: id,
+    name: val('e-name'), base_url: val('e-url'), model: val('e-model'),
+    api_key: val('e-key'),   // 留空 = 保持原 Key 不变
+    vision: document.querySelector('#e-vision').checked,
+    free: document.querySelector('#e-free').checked });
+  if (r.error) { toast(r.error, true); return false; }
+  _editingProv = null; toast('已保存'); loadLlm(); return false;
+}
+function provEditCard(p) {
+  return `<div class="card"><form onsubmit="return saveProvider(event,'${p.provider_id}')">
+    <div class="card-top"><span class="name">编辑：${p.name}</span></div>
+    <div class="fld" style="margin-top:var(--sp3)"><label>服务名称</label>
+      <input id="e-name" value="${p.name}"></div>
+    <div class="fld" style="margin-top:var(--sp3)"><label>服务地址</label>
+      <input id="e-url" value="${p.base_url}"></div>
+    <div class="fld" style="margin-top:var(--sp3)"><label>模型名称</label>
+      <input id="e-model" value="${p.model}"></div>
+    <div class="fld" style="margin-top:var(--sp3)"><label>API Key（留空 = 不改动）</label>
+      <input id="e-key" type="password" placeholder="留空保持原来的密钥"></div>
+    <div class="row" style="margin-top:var(--sp3)">
+      <label><input type="checkbox" id="e-vision" ${p.vision?'checked':''}> 能看懂图片</label>
+      <label><input type="checkbox" id="e-free" ${p.free?'checked':''}> 免费的</label>
+    </div>
+    <div class="actions" style="margin-top:var(--sp4)">
+      <button class="primary" type="submit">保存</button>
+      <button type="button" onclick="cancelEditProv()">取消</button>
+    </div>
+  </form></div>`;
+}
+function providerCard(p, i, arr) {
+  if (_editingProv === p.provider_id) return provEditCard(p);
+  // 状态：竖线颜色 + 一个说人话的徽标（不只靠颜色表达含义）
+  const st = p.enabled
+    ? { cls:'s-on',  pill:'<span class="pill pill-on">正在使用</span>' }
+    : { cls:'s-off', pill:'<span class="pill pill-off">已停用</span>' };
+  const role = p.vision ? '看懂照片内容、回答你的提问' : '处理文字问答';
+  return `<div class="card ${st.cls}">
+    <div class="card-top"><span class="name">${p.name}</span>${st.pill}</div>
+    <p class="card-what">负责：${role}</p>
+    <p class="card-note">模型：${p.model}</p>
+    <p class="card-note">密钥：${p.api_key_masked || '未填写'}${p.free ? ' · 免费额度' : ''}</p>
+    ${p.status ? `<p class="card-note" style="margin-top:var(--sp2)">最近情况：${p.status}</p>` : ''}
+    <div class="actions">
+      <span class="switch" title="${p.enabled?'停用':'启用'}"><input type="checkbox" ${p.enabled?'checked':''} onchange="providerEnable('${p.provider_id}',this.checked)"><span class="track"></span></span>
+      <button onclick="editProvider('${p.provider_id}')">编辑</button>
+      <button onclick="testProvider('${p.provider_id}')">测试</button>
+      <button onclick="moveProvider('${p.provider_id}','up')" title="调高优先级" ${i===0?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;vertical-align:-2px"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+      <button onclick="moveProvider('${p.provider_id}','down')" title="调低优先级" ${i===arr.length-1?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;vertical-align:-2px"><path d="M12 5v14M19 12l-7 7-7-7"/></svg></button>
+      <button class="danger" onclick="delProvider('${p.provider_id}','${p.name}')">删除</button>
+    </div>
+  </div>`;
+}
+
+function renderLlm(d) {
+  document.querySelector('#builtinGrid').innerHTML =
+    d.providers.map((p, i, arr) => providerCard(p, i, arr)).join('');
+  if (d.presets && d.presets.length) _presets = d.presets;
+  if (d.algos) renderAlgos(d.algos);
+}
+
+/* ================= 算法偏好 ================= */
+function _esc(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function renderAlgos(algos) {
+  document.querySelector('#algoGrid').innerHTML = algos.map(a => {
+    if (a.type === 'bool') {
+      const on = String(a.value) === '1';
+      return `<div class="card ${on?'s-on':'s-off'}">
+        <div class="card-top"><span class="name">${a.label}</span>
+          <span class="pill ${on?'pill-on':'pill-off'}">${on?'已开启':'已关闭'}</span></div>
+        <p class="card-note">${a.desc}</p>
+        <div class="actions"><span class="switch"><input type="checkbox" ${on?'checked':''} onchange="setAlgo('${a.key}',this.checked)"><span class="track"></span></span></div>
+      </div>`;
+    }
+    if (a.type === 'text') {
+      return `<div class="card">
+        <div class="card-top"><span class="name">${a.label}</span>
+          <span class="pill pill-info">${a.value ? '已设置' : '未设置'}</span></div>
+        <p class="card-note">${a.desc}</p>
+        <div class="actions"><input type="text" value="${_esc(a.value)}" placeholder="留空 = 不启用"
+          onchange="setAlgo('${a.key}',this.value)"></div>
+      </div>`;
+    }
+    if (a.type === 'textarea') {
+      return `<div class="card">
+        <div class="card-top"><span class="name">${a.label}</span>
+          <span class="pill pill-info">${(a.value||'').length ? '自定义' : '内置默认'}</span></div>
+        <p class="card-note">${a.desc}</p>
+        <textarea rows="5" style="width:100%;font-family:inherit;font-size:var(--fs-sm);padding:9px 11px;border:1px solid var(--line-2);border-radius:var(--radius-sm);margin-top:var(--sp3)"
+          onchange="setAlgo('${a.key}',this.value)">${_esc(a.value)}</textarea>
+        <div class="actions"><button onclick="setAlgo('${a.key}','')">恢复内置默认</button></div>
+      </div>`;
+    }
+    return `<div class="card">
+      <div class="card-top"><span class="name">${a.label}</span>
+        <span class="pill pill-info">${a.value}</span></div>
+      <p class="card-note">${a.desc}</p>
+      <div class="actions"><input type="range" min="${a.min}" max="${a.max}" step="${a.step}" value="${a.value}"
+        style="flex:1" onchange="setAlgo('${a.key}',this.value)"></div>
+    </div>`;
+  }).join('');
+}
+async function setAlgo(key, value) {
+  const r = await api('/api/settings/algos', { key, value });
+  toast(r.error ? r.error : '已保存：' + key + ' = ' + r.value, !!r.error);
+  loadLlm();
+}
+async function resetAlgos() {
+  if (!confirm('恢复全部算法设置为默认值？')) return;
+  await api('/api/settings/algos', { action: 'reset' });
+  toast('已恢复默认'); loadLlm();
+}
+
+async function addProvider(e) {
+  e.preventDefault();
+  const r = await api('/api/llm/provider', {
+    action: 'add', name: v('p-name'), base_url: v('p-url'), model: v('p-model'),
+    api_key: v('p-key'), free: !!v('p-free'), vision: !!v('p-vision'), enabled: true });
+  if (r.error) return toast(r.error, true);
+  toast('已添加，建议点「测试」验证');
+  document.querySelector('#provBox').open = false;
+  ['p-name','p-url','p-model','p-key','p-free','p-vision'].forEach(id => document.querySelector('#'+id).value = '');
+  document.querySelector('#p-preset-note').textContent = '';
+  loadLlm(); return false;
+  function v(id){ return document.querySelector('#'+id).value.trim(); }
+}
+async function providerEnable(id, en) { await api('/api/llm/provider', { action:'enable', provider_id:id, enabled:en }); loadLlm(); }
+async function delProvider(id, name) {
+  if (!confirm('删除 API 服务「' + name + '」？')) return;
+  await api('/api/llm/provider', { action:'delete', provider_id:id });
+  toast('已删除'); loadLlm();
+}
+async function testProvider(id) {
+  toast('测试中…');
+  const r = await api('/api/llm/provider', { action:'test', provider_id:id });
+  toast(r.ok ? `测试通过（${r.latency}s）：${r.reply}` : ('测试失败：' + r.error), !r.ok);
+  loadLlm();
+}
+async function moveProvider(id, dir) {
+  await api('/api/llm/provider', { action:'move', provider_id:id, dir });
+  loadLlm();
+}
+
+/* ================= 物品/场景词表 ================= */
+async function loadObjects() {
+  const d = await api('/api/settings/objects', {});
+  if (d.error) return;
+  const chip = t => `<span class="pill pill-info" style="margin:2px">${t}</span>`;
+  document.querySelector('#objBuiltin').innerHTML =
+    '<div class="plainmeta">这些词可以直接在搜索框里用：</div>'
+    + d.builtin.map(x => chip(x.tag)).join('');
+  document.querySelector('#objCustom').innerHTML = d.custom.length
+    ? d.custom.map(x => `<div class="card">
+        <div class="card-top"><span class="name">${x.tag}</span></div>
+        <p class="card-note">${x.text}</p>
+        <div class="actions"><button class="danger" onclick="delObject('${x.tag}')">删除</button></div>
+      </div>`).join('')
+    : '<div class="plainmeta" style="margin-top:var(--sp3)">还没有自定义物品。点上面「＋ 添加一个自定义物品」，之后就能在搜索框用它找照片。</div>';
+}
+async function addObject(e) {
+  e.preventDefault();
+  const r = await api('/api/settings/objects', { action: 'add',
+    tag: document.querySelector('#obj-tag').value.trim(),
+    text: document.querySelector('#obj-text').value.trim() });
+  if (r.error) return toast(r.error, true);
+  toast('已加入词表。全库重新打分后生效（点下方按钮）');
+  document.querySelector('#obj-tag').value = ''; document.querySelector('#obj-text').value = '';
+  loadObjects(); return false;
+}
+async function delObject(tag) {
+  await api('/api/settings/objects', { action: 'delete', tag });
+  toast('已删除「' + tag + '」（重建后不再参与打分）');
+  loadObjects();
+}
+async function rebuildScene() {
+  if (!confirm('全库重新打分场景/物品标签？本地 SIGLIP 跑，约几分钟，期间不影响浏览。')) return;
+  const r = await api('/api/scene/rebuild', {});
+  toast(r.error === 'already_running' ? '已在重建中' : (r.ok === false ? '失败：' + r.error : '已开始后台重建'));
+}
+async function saveVlmInterval(v) {
+  const n = parseInt(v, 10);
+  if (!n || n < 5) return toast('间隔至少 5 分钟', true);
+  await api('/api/vlm/autorun', { interval_min: n });
+  toast('自动描述间隔已改为 ' + n + ' 分钟'); load();
+}
+async function saveScanInterval(v) {
+  const n = parseInt(v, 10);
+  if (!n || n < 15) return toast('间隔至少 15 分钟', true);
+  await api('/api/source/autoscan', { interval_min: n });
+  toast('自动扫描间隔已改为 ' + n + ' 分钟'); load();
+}
+
+/* ================= 照片来源 =================
+   2026-09-17 移除：图库「设置 → 来源管理」已有完整入口（添加/停用/移除/自动发现/
+   自动更新间隔），这里再放一份是重复，且两处状态容易看岔。本页只留 AI 与任务。 */
+
+/* ================= 加载 ================= */
+async function load() {
+  try {
+    const d = await api('/api/models/status', {});
+    render(d);
+  } catch (e) { document.querySelector('#refreshTag').textContent = '刷新失败：' + e.message; }
+}
+async function loadLlm() {
+  try {
+    const d = await api('/api/llm/status', {});
+    renderLlm(d);
+  } catch (e) { console.warn('llm status', e); }
+}
+async function toggle(key, on) { await api('/api/models/toggle', { key, enabled: on }); load(); }
+async function runFaces() { await api('/api/faces/run', {}); load(); }
+async function runVlm() { await api('/api/vlm/run', {}); load(); }
+async function runScene() {
+  if (!confirm('全库重新打分场景/物品标签？本地 SIGLIP 跑，约几分钟，期间不影响浏览。')) return;
+  await api('/api/scene/rebuild', {}); load();
+}
+async function runGeo() { await api('/api/geo/vision-verify', { force: true }); load(); }
+
+load(); loadLlm(); loadObjects();
+setInterval(load, 5000);
+setInterval(() => { if (!_editingProv) loadLlm(); }, 15000);   // 编辑中不重渲染，防表单被冲掉
+// Chrome 后台标签页会冻结定时器：切回页面时立即拉最新状态，避免看到旧快照
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !_editingProv) { load(); loadLlm(); }
+});
+</script>
+</body>
+</html>

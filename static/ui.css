@@ -1,0 +1,50 @@
+/* ============================================================
+   家庭回忆相册 · 统一卡片外观层
+   ──────────────────────────────────────────────────────────
+   引入：各页 <head> 末尾（theme.css 与页面自有 <style> 之后）
+        <link rel="stylesheet" href="/ui.css?v=2">
+
+   范围（2026-09-18 用户纠正后定稿）：
+   用户原话「这个头像和按钮还是要变成圆形，我只是说图片的卡片」。
+   → 本层【不做】全局圆角归零：头像、圆形按钮、开关滑钮、徽标、弹窗、
+     输入框等一律保持各页原有圆角；
+   → 只对「图片/内容卡片家族」做统一：
+     直角 + 白面 + 1px 发丝线 + 无阴影 + 悬浮只加深描边不位移。
+     卡片家族：.srccard .cand .person .stat .card .hero .empty .custom-card
+              .disclosure .conflicts .focus-card .help-card .add-card
+   照片墙马赛克瓦片 .asset 本来就是直角无阴影，不再动它。
+   ============================================================ */
+
+.srccard, .cand, .person, .stat, .card, .custom-card, .hero, .empty,
+.disclosure, .conflicts, .focus-card, .help-card, .add-card{
+  border-radius:0 !important;
+  box-shadow:none !important;
+  transition:border-color .15s ease-out, background .15s ease-out !important;
+}
+
+/* 白面（.add-card / .empty 本来就是透明或虚线占位，不强制白底） */
+.srccard, .cand, .card, .custom-card, .hero, .focus-card, .help-card, .disclosure{
+  background:#fff !important;
+}
+
+/* 统一描边：原来缺边框的（来源卡 / 候选行）补上同一条发丝线 */
+.srccard, .cand, .person, .stat, .card, .hero, .custom-card, .disclosure, .conflicts{
+  border:1px solid var(--line) !important;
+}
+.disclosure{ border-style:dashed !important; }
+
+/* 悬浮：只加深描边，不投影、不位移（马赛克观感，不要「精致卡片」化） */
+.srccard:hover, .cand:hover, .person:hover, .stat:hover, .card:hover,
+.hero:hover, .add-card:hover, .custom-card:hover{
+  border-color:var(--accent) !important;
+  box-shadow:none !important;
+  transform:none !important;
+}
+
+/* ---------- 图片加载失败占位（替换「静默删卡片」） ---------- */
+.imgerr{ position:relative; display:flex; align-items:center; justify-content:center;
+  background:#f0ede8 !important; }
+.imgerr > img{ display:none !important; }
+.imgerr-tag{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  font-size:11px; color:#a09a90; letter-spacing:.4px; pointer-events:none;
+  background:repeating-linear-gradient(45deg,#f4f2ee,#f4f2ee 6px,#eeebe6 6px,#eeebe6 12px); }

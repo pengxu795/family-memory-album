@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>初始化向导 · 家庭相册</title>
+<style>
+:root{--bg:#ffffff;--card:#fff;--ink:#131314;--mut:#797979;--acc:#2f31f5;--ok:#1d9e75;--err:#e5484d}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);display:grid;place-items:center;min-height:100vh}
+main{width:min(460px,92vw);background:var(--card);border:1px solid #ebebe9;border-radius:16px;padding:28px}
+h1{font-size:18px;margin:0 0 4px}
+.step-tag{font-size:12px;color:var(--mut);margin-bottom:18px}
+label{display:block;font-size:13px;margin:14px 0 6px;font-weight:500}
+input{width:100%;padding:10px 12px;border:1px solid #e3e3e0;border-radius:8px;font-size:14px}
+input:focus{outline:2px solid var(--acc);border-color:transparent}
+button{width:100%;margin-top:18px;padding:11px;border:0;border-radius:8px;background:var(--acc);color:#fff;font-size:15px;cursor:pointer}
+button:disabled{opacity:.5;cursor:wait}
+.msg{font-size:13px;margin-top:12px;min-height:18px}
+.msg.err{color:var(--err)}.msg.ok{color:var(--ok)}
+.dirinfo{font-size:12px;color:var(--mut);margin-top:8px}
+.bar{height:8px;background:#f0f0ee;border-radius:4px;margin-top:14px;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--acc);width:0;transition:width .4s}
+.done{text-align:center;padding:20px 0}
+.done .big{font-size:40px}
+.hint{font-size:12px;color:var(--mut);margin-top:10px;line-height:1.6}
+.hidden{display:none}
+.ghost{width:100%;margin-top:10px;padding:9px;border:1px solid var(--acc);border-radius:8px;background:transparent;color:var(--acc);font-size:13px;cursor:pointer}
+.crumbs{font-size:12px;color:var(--mut);margin-top:10px;min-height:16px;word-break:break-all}
+.dirlist{list-style:none;margin:6px 0 0;padding:0;max-height:180px;overflow-y:auto;border:1px solid #f0f0ee;border-radius:8px}
+.dirlist li{padding:8px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid #f4f4f2}
+.dirlist li:hover{background:#ffffff}
+.dirlist li .n{color:var(--mut);font-size:12px;float:right}
+.browse-box{margin-top:10px}
+</style>
+<link rel="stylesheet" href="/theme.css?v=06">
+<link rel="stylesheet" href="/ui.css?v=2">
+</head>
+<body>
+<main>
+  <h1>家庭相册 · 初始化</h1>
+  <div class="step-tag" id="stepTag">第 1 步 / 共 3 步</div>
+
+  <section id="s1">
+    <label>管理员用户名</label>
+    <input id="username" placeholder="例如：admin" autocomplete="off">
+    <label>管理员密码（至少 6 位）</label>
+    <input id="password" type="password" placeholder="用于以后登录管理">
+    <button id="btn1">创建管理员</button>
+    <div class="msg" id="m1"></div>
+    <div class="hint">管理员拥有全部配置权限；家人账号和访客以后在设置里添加。</div>
+  </section>
+
+  <section id="s2" class="hidden">
+    <label>照片目录</label>
+    <input id="photodir" placeholder="例如：/Users/xxx/Pictures 或 /mnt/nas/Photos" autocomplete="off">
+    <button id="btn2a">校验目录</button>
+    <button id="btn2b" class="hidden">确认并开始首次扫描</button>
+    <div class="msg" id="m2"></div>
+    <div class="dirinfo" id="dirinfo"></div>
+    <div class="hint">不知道路径？点下面「浏览目录」逐级选择。原片只读，相册不会修改任何原文件。</div>
+    <div class="browse-box" id="browseBox">
+      <button id="btnBrowse" type="button" class="ghost">📁 浏览目录</button>
+      <div id="crumbs" class="crumbs"></div>
+      <ul id="dirList" class="dirlist"></ul>
+      <div class="msg" id="mBrowse"></div>
+    </div>
+  </section>
+
+  <section id="s3" class="hidden">
+    <div class="bar"><i id="bar"></i></div>
+    <div class="msg" id="m3">正在扫描...</div>
+    <div class="hint" id="s3hint"></div>
+  </section>
+
+  <section id="s4" class="hidden done">
+    <div class="big">✅</div>
+    <p id="doneMsg">初始化完成</p>
+    <button onclick="location.href='/'">进入相册</button>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let dir = "";
+
+function show(n){
+  for(let i=1;i<=4;i++) $("s"+i).classList.add("hidden");
+  $("s"+n).classList.remove("hidden");
+  $("stepTag").textContent = n<=3 ? `第 ${n} 步 / 共 3 步` : "完成";
+}
+
+async function api(path, body){
+  const r = await fetch(path, body ? {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)} : {});
+  return {status:r.status, data:await r.json().catch(()=>({}))};
+}
+
+// 进入时先看状态：完成→完成页；已建管理员→跳步骤2；扫描中→进度页
+api("/api/init/status").then(({data})=>{
+  if(data.initialized){ show(4); $("doneMsg").textContent="相册已初始化"; }
+  else if(data.scan && data.scan.status==="scanning"){ show(3); poll(); }
+  else if(data.has_admin){ show(2); }
+});
+
+$("btn1").onclick = async () => {
+  $("btn1").disabled = true; $("m1").textContent=""; $("m1").className="msg";
+  const {data} = await api("/api/init/admin", {username:$("username").value.trim(), password:$("password").value});
+  $("btn1").disabled = false;
+  if(data.ok){ show(2); }
+  else { $("m1").textContent = data.msg || "创建失败"; $("m1").className="msg err"; }
+};
+
+$("btn2a").onclick = async () => {
+  $("btn2a").disabled = true; $("m2").textContent=""; $("m2").className="msg"; $("dirinfo").textContent="";
+  const {data} = await api("/api/init/validate-dir", {path:$("photodir").value.trim()});
+  $("btn2a").disabled = false;
+  if(data.ok){
+    dir = $("photodir").value.trim();
+    $("m2").textContent = "目录可用"; $("m2").className="msg ok";
+    $("dirinfo").textContent = `发现约 ${data.info.media_files}${data.info.truncated?"+":""} 个照片/视频文件`;
+    $("btn2b").classList.remove("hidden");
+  } else {
+    $("m2").textContent = data.msg || "目录不可用"; $("m2").className="msg err";
+    $("btn2b").classList.add("hidden");
+  }
+};
+
+$("btn2b").onclick = async () => {
+  $("btn2b").disabled = true;
+  const {status, data} = await api("/api/init/finish", {path:dir});
+  if(status===200 && data.ok){ show(3); poll(); }
+  else { $("btn2b").disabled = false; $("m2").textContent = data.msg || "触发扫描失败"; $("m2").className="msg err"; }
+};
+
+let pollTimer = null;
+
+// ===== 目录浏览（/api/init/browse-dir）：常用根 → 逐级下钻 =====
+async function browse(path){
+  const {data} = await api("/api/init/browse-dir", {path: path || ""});
+  if(!data.ok){ $("mBrowse").textContent = data.msg || "浏览失败"; $("mBrowse").className="msg err"; return; }
+  $("mBrowse").textContent=""; $("mBrowse").className="msg";
+  const list = $("dirList"); list.innerHTML = "";
+  const escDir = s => String(s??"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  if(data.roots){                      // 候选根
+    $("crumbs").textContent = "常用位置（含 NAS / 移动盘挂载）：";
+    for(const r of data.roots){
+      const li = document.createElement("li");
+      // 2026-09-14 审计修复：目录名来自文件系统，必须转义后再进 innerHTML
+      li.innerHTML = `📁 ${escDir(r.path.split("/").filter(Boolean).pop() || r.path)} <span class="n">${r.media} 个媒体文件</span>`;
+      li.title = r.path;
+      li.onclick = () => { $("photodir").value = r.path; browse(r.path); };
+      list.appendChild(li);
+    }
+  } else {                             // 子目录
+    $("crumbs").textContent = "当前位置：" + data.current;
+    const up = document.createElement("li");
+    up.textContent = "↩️ 上一级";
+    up.onclick = () => data.parent && browse(data.parent);
+    list.appendChild(up);
+    for(const d of data.dirs){
+      const li = document.createElement("li");
+      li.textContent = "📁 " + d.name;   // 2026-09-14 审计修复：textContent 不可被注入
+      li.onclick = () => { $("photodir").value = d.path; browse(d.path); };
+      list.appendChild(li);
+    }
+    if(!data.dirs.length){ const li=document.createElement("li"); li.textContent="（无子目录，可直接点上方「校验目录」）"; list.appendChild(li); }
+    $("photodir").value = data.current;
+  }
+}
+$("btnBrowse").onclick = () => browse("");
+function poll(){
+  pollTimer = setInterval(async () => {
+    try{
+      const {data} = await api("/api/init/status");
+    const s = data.scan || {};
+    if(s.status==="done" || s.status==="error"){
+      clearInterval(pollTimer);
+      if(s.status==="done"){ $("bar").style.width="100%"; $("m3").textContent=s.message||"扫描完成"; setTimeout(()=>show(4), 800); }
+      else { $("m3").textContent = "扫描出错："+(s.message||"未知错误"); $("m3").className="msg err"; }
+      return;
+    }
+    const scanned = s.scanned||0;
+    // 入库阶段后端上报 indexed/total_new，用真实百分比；扫描阶段总量未知，用缓动假进度
+    if(typeof s.total_new === "number" && s.total_new > 0 && typeof s.indexed === "number"){
+      const pct = Math.round(s.indexed / s.total_new * 100);
+      $("bar").style.width = pct + "%";
+      $("m3").textContent = `正在入库 ${s.indexed}/${s.total_new}（${pct}%）`;
+    } else {
+      $("bar").style.width = Math.min(90, 5 + scanned/100) + "%";
+      $("m3").textContent = s.message || "正在扫描...";
+    }
+    }catch(e){ /* 服务重启中，下一轮再试；连续失败超 40 次(约1分钟)放弃轮询 */
+      pollFails = (pollFails||0)+1;
+      if(pollFails > 40){ clearInterval(pollTimer); $("m3").textContent = "无法连接服务，请刷新页面重试"; $("m3").className="msg err"; }
+    }
+  }, 1500);
+}
+</script>
+<script src="offline-guard.js"></script>
+</body>
+</html>

@@ -1,0 +1,1743 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mundane</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/svg+xml" href="/logo/icon.svg">
+<link rel="apple-touch-icon" href="/logo/apple-touch-icon.png">
+<meta name="theme-color" content="#131314">
+<script>if(location.protocol==='file:')location.replace('http://localhost:8788/');</script>
+<style>
+  :root {
+    --bg: #ebebe9;
+    --ink: #131314;
+    --muted: #9a9a96;
+    --accent: #2f31f5;
+    --line: #ebebe9;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body {
+    font-family: "Helvetica Neue", -apple-system, "PingFang SC", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    overflow-x: hidden;
+  }
+
+  /* ===== 顶部：时间戳(左) + 标题(中) + 入口(右) ===== */
+  .topbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    display: flex; align-items: flex-start; justify-content: space-between;
+    padding: 18px 26px;
+    pointer-events: none;
+  }
+  .clock {
+    font-size: 11px; color: #6b6b6b; letter-spacing: .4px;
+    font-variant-numeric: tabular-nums; line-height: 1.55;
+  }
+  .clock .date { display: block; }
+  /* 品牌标题字体：Sanserata Black（用户可双击自行更改文字，存服务端全设备同步） */
+  @font-face {
+    font-family: 'Sanserata';
+    src: url('/fonts/Sanserata-Black.otf') format('opentype');
+    font-weight: 900;
+    font-display: swap;
+  }
+  .brand {
+    pointer-events: auto;
+    font-family: 'Sanserata', -apple-system, "PingFang SC", sans-serif;
+    font-size: 20pt; letter-spacing: 2px; color: var(--ink);
+    font-weight: 900; cursor: pointer; line-height: 1.1;
+    position: absolute; left: 50%; transform: translateX(-50%); top: 18px;
+    user-select: none; -webkit-user-select: none;
+  }
+  .brand:hover { color: var(--accent); }
+  .brand[contenteditable="true"] { outline: 2px dashed rgba(47,49,245,.4); outline-offset: 6px; border-radius: 4px; cursor: text; }
+
+  /* ===== 3D 舞台 ===== */
+  .stage { position: fixed; inset: 0; overflow: hidden; }
+  .scene {
+    position: absolute; inset: 0;
+    transform-style: preserve-3d;
+    will-change: transform;
+  }
+  .ribbon {
+    position: absolute; inset: 0;
+    transform-style: preserve-3d;
+  }
+  .photo {
+    position: absolute; left: 50%; top: 50%;
+    background: transparent;
+    overflow: hidden;
+    cursor: zoom-in;
+    transform-style: preserve-3d;
+    backface-visibility: hidden;
+    box-shadow:
+      0 1px 1px rgba(0,0,0,.08),
+      0 3px 6px rgba(0,0,0,.12),
+      0 8px 16px rgba(0,0,0,.10),
+      0 16px 32px rgba(0,0,0,.08);
+    /* transform/width/height/margin 由 JS 逐帧动画控制，不加 CSS transition */
+    transition: box-shadow .3s, filter .3s, opacity .3s;
+    will-change: transform, width, height, margin;
+  }
+  .photo img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; transform: scale(1.03); }
+  /* 聚焦放大时视频实播层（覆盖封面图，同样 cover 裁切） */
+  .photo video.ph-live { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+  /* 内层：纯载体 + 快速滚动时绕底边整体翘起（由 JS 逐帧设 rotateX） */
+  .ph-float {
+    position: absolute; inset: 0;
+    transform-origin: 50% 100%;          /* 绕底部中心：底部不动、上沿前倾 = 整体翘起 */
+    will-change: transform;
+  }
+  .ph-enter { position: absolute; inset: 0; }
+  .photo.focus {
+    box-shadow:
+      0 1px 1px rgba(0,0,0,.10),
+      0 4px 8px rgba(0,0,0,.16),
+      0 12px 24px rgba(0,0,0,.14),
+      0 24px 48px rgba(0,0,0,.10);
+  }
+
+  /* ===== 聚焦态信息文字块（参考 every : second：细竖线从照片底边延续下来+文字在右） ===== */
+  .focus-card {
+    position: fixed; left: 50%; bottom: auto; top: 0; z-index: 120;
+    transform: translateX(-50%) translateY(18px);
+    width: min(420px, 86vw);
+    display: flex; align-items: stretch;
+    font-size: 14px; color: #3a3a36; line-height: 1.5;
+    text-align: left;
+    opacity: 0; pointer-events: none;
+    transition: opacity .4s ease, transform .4s ease;
+  }
+  .focus-card.visible {
+    opacity: 1; pointer-events: auto;
+    transform: translateX(-50%) translateY(0);
+  }
+  /* 细竖线：顶端紧贴照片底边（JS 动态锚定，上探 18px 接住照片），向下贯穿整个文字块 */
+  .focus-card .fc-line {
+    position: absolute; left: 1px; top: -18px; bottom: 2px; width: 1px;
+    background: #131314;
+    transform-origin: top; transform: scaleY(0);
+  }
+  .focus-card .fc-body { flex: 1; min-width: 0; margin-left: 25px; }
+  .focus-card .fc-anim { opacity: 0; }
+  .focus-card .fc-date {
+    font-size: 13px; font-weight: 700; color: #131314;
+    margin-bottom: 7px; letter-spacing: .1px;
+  }
+  .focus-card .fc-place {
+    font-size: 12px; font-weight: 500; color: #6b6b6b;
+    text-transform: uppercase; letter-spacing: .2px; margin-bottom: 5px;
+  }
+  .focus-card .fc-source {
+    font-size: 12px; color: #a3a39d;
+    text-transform: uppercase; letter-spacing: .2px;
+  }
+  .focus-card .fc-actions {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 7px;
+    margin-top: 16px;
+  }
+  .focus-card .fc-actions button {
+    background: none; border: none; padding: 0;
+    font-size: 11px; color: #8a8a85; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: color .15s;
+  }
+  .focus-card .fc-actions button:hover { color: var(--accent); }
+  .focus-card .fc-actions button.ghost { color: #c3c3bd; }
+  .focus-card .fc-actions button.ghost:hover { color: #9a9a94; }
+  .focus-card .fc-actions svg { width: 13px; height: 13px; }
+  /* 逐行入场动效（参考 every : second 换图时文字逐行浮现；竖线慢慢生长） */
+  @keyframes fcLineGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+  @keyframes fcRise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  .focus-card .fc-anim.in { animation: fcRise .5s cubic-bezier(.25, .6, .3, 1) both; }
+  .focus-card .fc-line.in { animation: fcLineGrow .9s cubic-bezier(.25, .5, .3, 1) both; }
+
+  /* ===== 右侧标签列表 ===== */
+  .taglist {
+    position: absolute; right: 47px; top: 44px; bottom: 70px; z-index: 90;
+    width: 156px; padding: 0 0 0 0;
+    overflow-y: auto; scrollbar-width: none;
+    transition: transform .55s cubic-bezier(.45, 0, .2, 1);
+    display: flex; flex-direction: column; justify-content: flex-end;
+  }
+  .taglist::-webkit-scrollbar { display: none; }
+  /* 聚焦时整列向右滑出屏幕（2026-09-04 用户要求：位移离场，不做透明度淡出） */
+  body.focused .taglist { transform: translateX(calc(100% + 60px)); pointer-events: none; }
+  .taglist .tag {
+    display: block; width: 100%; text-align: right;
+    background: none; border: none;
+    font-size: 10px; color: #b8b8b3; padding: 2px 0;
+    cursor: pointer; letter-spacing: 0; transition: color .15s;
+  }
+  .taglist .tag:hover { color: var(--ink); }
+  .taglist .tag.all { color: #797979; font-weight: 500; }
+  .taglist .tag.on { color: #797979; }
+
+  /* ===== 二级分类抽屉：一级大类别可折叠，二级具体标签 ===== */
+  .taglist .taggroup {
+    display: block; width: 100%; text-align: right;
+    background: none; border: none;
+    font-size: 10px; font-weight: 500; color: #797979;
+    padding: 6px 0 2px 0; cursor: pointer; letter-spacing: 0;
+    transition: color .15s;
+  }
+  .taglist .taggroup:hover { color: var(--ink); }
+  .taglist .taggroup.open { color: var(--ink); }
+  .taglist .tagsub { display: none; }
+  .taglist .tagsub.open { display: block; }
+  .taglist .tagsub .tag { padding: 1px 0; font-size: 10px; font-weight: 400; color: #bdbdb8; }
+
+  /* ===== 底部图标（右下） ===== */
+  .boticons {
+    position: fixed; bottom: 20px; right: 26px; z-index: 100;
+    display: flex; gap: 10px;
+    transition: opacity .25s;
+  }
+  body.focused .boticons { opacity: 0; pointer-events: none; }
+  /* 2026-09-07 13:05：底部 4 个图标全部改「hover 动效展开中文标签」——平时只显示 icon，
+     指针移上去胶囊从 42px 圆钮平滑撑开、淡入文字（家庭影像总库 / 地图模式 / 刷新 / 帮助）。
+     宽度动画用 max-width（width:auto 无法过渡）；scale 放大弃用（胶囊展开后 scale 会晃）。 */
+  .boticons .bico {
+    display: inline-flex; align-items: center;
+    height: 42px; padding: 0 10px;
+    background: rgba(255,255,255,.78); border: 1px solid transparent;
+    border-radius: 21px; white-space: nowrap;
+    color: #6b6b6b; cursor: pointer;
+    transition: background .2s, color .2s, border-color .2s;
+  }
+  .boticons .bico svg { width: 22px; height: 22px; flex: 0 0 auto; }
+  .boticons .bico .blabel {
+    display: inline-block; max-width: 0; opacity: 0; overflow: hidden;
+    font-size: 12px; letter-spacing: 1px;
+    transition: max-width .28s ease, opacity .18s ease, padding .28s ease;
+  }
+  .boticons .bico:hover {
+    color: var(--ink);
+    background: rgba(255,255,255,.92); border-color: var(--line);
+  }
+  .boticons .bico:hover .blabel { max-width: 140px; opacity: 1; padding-left: 8px; padding-right: 6px; }
+  .boticons .bico:active { color: var(--accent); }
+
+  /* ===== 对话 / 查询：左侧的纯文字消息流，零气泡零颜色 =====
+     2026-09-06 v5：用户截图标注左侧大框 + 箭头「从右边放到左边来」。
+     位置严格按用户标注框：left≈130px, top≈150px（不贴边、比标题低）。
+     保留 v4 的上下渐隐 + 隐藏滚动条。 */
+  .thread {
+    position: fixed; left: 130px; top: 96px;
+    z-index: 110;
+    width: min(340px, 50vw);
+    max-height: 44vh;
+    overflow-y: auto;
+    scrollbar-width: none;
+    pointer-events: none;          /* 仅消息自身可点；不要拦截照片墙交互 */
+    padding: 12px 0;
+    /* 上下渐隐：36px 完全可见区 + 16px 渐变到完全透明 */
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent 0,
+      rgba(0,0,0,.7) 16px,
+      #000 32px,
+      #000 calc(100% - 32px),
+      rgba(0,0,0,.7) calc(100% - 16px),
+      transparent 100%
+    );
+            mask-image: linear-gradient(
+      to bottom,
+      transparent 0,
+      rgba(0,0,0,.7) 16px,
+      #000 32px,
+      #000 calc(100% - 32px),
+      rgba(0,0,0,.7) calc(100% - 16px),
+      transparent 100%
+    );
+  }
+  .thread::-webkit-scrollbar { display: none; }
+  body.focused .thread { opacity: 0; pointer-events: none; transform: translateY(-20px); transition: opacity .25s, transform .25s; }
+  .msg {
+    margin: 0 0 8px;              /* 行间距小一点 */
+    pointer-events: auto;
+  }
+  /* 明度三档阶梯（用户 12:10 反馈：搜索词和回答要能一眼分清）
+     浅灰 = 我搜的（退后·次要） → 中灰 = 没找到的提示（回应） → 黑 = 正文（主） */
+  .msg .q {
+    color: #b8b8ae;                /* 最浅：搜索词，明显退到背景层 */
+    font-size: 12px; line-height: 1.35; letter-spacing: .4px;
+    margin-bottom: 4px;
+  }
+  .msg .ans {
+    color: #1f1f1f;                /* 最深：命中时的正文 */
+    font-size: 13px; line-height: 1.4; letter-spacing: .2px;
+  }
+  /* "没找到" 的提示型回答：中深灰——比搜索词深（看得出是"回应"），
+     比正文浅（看得出不是"命中"）。之前是 #a3a3a0，跟 .q 的 #797979 几乎同色。 */
+  .msg .ans.hint {
+    color: #5e5e56;
+    font-size: 11px; line-height: 1.4;
+  }
+  .msg .ans .typing { color: #d5d5d2; letter-spacing: 2px; font-size: 14px; }
+  .qbox {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    z-index: 200; width: min(620px, 90vw);
+    display: flex; align-items: center; justify-content: center;
+    opacity: .9; transition: opacity .25s, transform .4s cubic-bezier(.4,0,.2,1);
+  }
+  .qbox:hover, .qbox:focus-within { opacity: 1; }
+  /* 聚焦态：整个语音输入框往下滑出屏幕（与右侧分类滑出同风格），不做透明度淡出 */
+  body.focused .qbox { pointer-events: none; transform: translateX(-50%) translateY(calc(100% + 40px)); }
+  [hidden] { display: none !important; }
+  /* 主圆形语音按钮 */
+  .qb-main {
+    width: 56px; height: 56px; border-radius: 50%;
+    background: var(--ink); color: #fff; border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 16px rgba(0,0,0,.22);
+    transition: transform .2s, background .2s;
+  }
+  .qb-main:hover { transform: scale(1.07); background: var(--accent); }
+  .qb-main svg { width: 22px; height: 22px; fill: currentColor; }
+  .qb-main.recording { background: var(--accent); animation: qbPulse 1.2s ease-in-out infinite; }
+  @keyframes qbPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(47,49,245,.5); }
+    50%      { box-shadow: 0 0 0 16px rgba(47,49,245,0); }
+  }
+  /* 展开的语音/文字两个选项 */
+  .qb-opts { display: flex; gap: 10px; align-items: center; animation: qbPop .18s ease-out; }
+  @keyframes qbPop { from { opacity: 0; transform: translateY(6px) scale(.92); } to { opacity: 1; transform: none; } }
+  .qb-opt {
+    display: flex; align-items: center; gap: 7px;
+    background: rgba(255,255,255,.96); border: 1px solid #ebebe9; border-radius: 22px;
+    padding: 11px 18px; font-size: 13px; color: var(--ink); cursor: pointer;
+    box-shadow: 0 2px 10px rgba(0,0,0,.08); transition: all .15s; white-space: nowrap;
+  }
+  .qb-opt svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .qb-opt:hover { border-color: var(--accent); color: var(--accent); }
+  /* 文字输入面板 */
+  .qb-input { display: flex; gap: 8px; width: 100%; animation: qbPop .18s ease-out; }
+  .qb-input input {
+    flex: 1; padding: 13px 20px; border: 1px solid #ebebe9; border-radius: 22px;
+    font-size: 14px; outline: none; background: rgba(255,255,255,.95);
+    box-shadow: 0 2px 10px rgba(0,0,0,.05);
+  }
+  .qb-input input:focus { border-color: var(--accent); }
+  .qb-input button {
+    background: var(--ink); color: #fff; border: none; border-radius: 22px;
+    padding: 0 22px; font-size: 13px; cursor: pointer; letter-spacing: 1px;
+  }
+  .qb-input button:disabled { opacity: .4; }
+  /* ===== .msg / .q / .ans 的紧凑气泡样式见上方 .thread 块 ===== */
+  .memory { margin-top: 10px; padding: 8px 12px; background: #f4f4f2; border-left: 3px solid var(--accent); font-size: 13px; color: #6b6b6b; font-style: italic; }
+  .meta { font-size: 10px; color: var(--muted); margin-top: 10px; letter-spacing: .5px; }
+  .typing { color: var(--muted); letter-spacing: 3px; }
+
+  .spin { display: inline-block; width: 11px; height: 11px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* 查看器样式与实现已统一移至 /viewer.js（2026-09-03） */
+
+
+  /* ===== 视频徽标（墙上的视频照片） ===== */
+  .ph-vid { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+  .ph-play {
+    width: 42px; height: 42px; border-radius: 50%;
+    background: rgba(12,12,12,.46); color:#fff;
+    display:flex; align-items:center; justify-content:center;
+    font-size: 15px; padding-left: 3px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.25);
+  }
+
+  /* ===== 墙上计数（左下角） ===== */
+  /* 2026-09-06：用户不要这个提示（"墙上 50 项 · 照片 50 · 视频 0"），
+     既不要压在照片上也不要单独显示。直接隐藏 DOM 但保留 JS 引用，
+     后续想恢复改回 display 即可。 */
+  .wallcount {
+    position: fixed; left: 26px; bottom: 20px; z-index: 90;
+    font-size: 11px; color: #6b6b6b; letter-spacing: .4px;
+    background: rgba(255,255,255,.6); border-radius: 10px; padding: 4px 10px;
+    transition: opacity .25s;
+    display: none;
+  }
+  body.focused .wallcount { opacity: 0; pointer-events: none; }
+
+  /* ===== 帮助浮层 ===== */
+  .help {
+    position: fixed; inset: 0; z-index: 2000; display: none;
+    background: rgba(20,20,20,.4); backdrop-filter: blur(3px);
+    align-items: center; justify-content: center;
+  }
+  .help.open { display: flex; }
+  .help-card {
+    width: min(460px, 90vw); background:#ffffff; border-radius: 14px;
+    padding: 26px 28px; box-shadow: 0 18px 60px rgba(0,0,0,.25);
+  }
+  .help-card h2 { font-size: 16px; letter-spacing: 1px; margin-bottom: 14px; }
+  .help-card ul { list-style: none; font-size: 13px; color: #6b6b6b; line-height: 1.9; }
+  .help-card ul b { color: var(--ink); font-weight: 600; }
+  .help-card h3 { font-size: 13px; margin: 16px 0 8px; color: var(--muted); font-weight: 500; }
+  .help-ex { display: flex; flex-direction: column; gap: 6px; }
+  .help-ex button {
+    text-align: left; background: #f7f7f5; border: 1px solid var(--line);
+    border-radius: 9px; padding: 8px 12px; font-size: 13px; color: #333;
+    cursor: pointer; transition: all .15s;
+  }
+  .help-ex button:hover { border-color: var(--accent); color: var(--accent); }
+  .help-close {
+    margin-top: 18px; width: 100%; padding: 10px; background: var(--ink); color: #fff;
+    border: none; border-radius: 10px; font-size: 13px; cursor: pointer; letter-spacing: 1px;
+  }
+
+  /* ===== 手机/Pad 适配 ===== */
+  @media (max-width: 640px) {
+    .taglist {
+      left: 12px; right: 12px; width: auto; bottom: 84px; padding: 0;
+      display: flex; overflow-x: auto; gap: 8px;
+      scrollbar-width: none;
+    }
+    .taglist::-webkit-scrollbar { display: none; }
+    .taglist .tag {
+      flex: 0 0 auto; background: rgba(255,255,255,.85);
+      border: 1px solid var(--line); border-radius: 14px; padding: 6px 12px;
+      white-space: nowrap; text-align: left;
+    }
+    .taglist .tag.on { border-color: var(--accent); }
+    /* 手机上二级分类也要横排：tagsub 是 div（flex 整体子项），内部需自行 flex */
+    .taglist .taggroup {
+      flex: 0 0 auto; background: rgba(255,255,255,.85);
+      border: 1px solid var(--line); border-radius: 14px;
+      padding: 6px 12px; white-space: nowrap;
+    }
+    .taglist .tagsub { display: none; }
+    .taglist .tagsub.open { display: flex; gap: 8px; }
+    .taglist .tagsub .tag { flex: 0 0 auto; }
+    .qbox { bottom: 16px; }
+    .qb-main { width: 48px; height: 48px; }
+    .qb-main svg { width: 19px; height: 19px; }
+    .qb-opt { padding: 9px 14px; font-size: 12px; }
+    .qb-input input { padding: 11px 16px; font-size: 13px; }
+    .qb-input button { padding: 0 16px; }
+    .boticons { bottom: 128px; right: 12px; }
+    .boticons .bico { height: 38px; padding: 0 8px; }
+    .boticons .bico svg { width: 19px; height: 19px; }
+    .topbar { padding: 12px 14px; }
+    .brand { top: 12px; letter-spacing: 2px; }
+    .wallcount { left: 12px; bottom: 74px; display: none; }
+  }
+</style>
+<link rel="stylesheet" href="/theme.css?v=06">
+<link rel="stylesheet" href="/ui.css?v=2">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="clock"><span class="date" id="clockdate">—</span><span id="clocktime">—</span></div>
+  <div class="brand" id="brandText" title="双击修改标题" ondblclick="editBrand(event)">Mundane</div>
+</div>
+
+<div class="stage">
+  <div class="scene"><div class="ribbon" id="ribbon-home"></div></div>
+  <div class="taglist" id="taglist"></div>
+</div>
+
+<div class="boticons">
+  <span class="bico" title="影像总库" onclick="location.href='/library.html'">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-4.5-4.5L8 19"/></svg>
+    <span class="blabel">影像总库</span>
+  </span>
+  <span class="bico" title="地图模式 · 中国地图上的照片分布" onclick="location.href='/library.html?map=1'">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l6-3 6 3 6-3v13l-6 3-6-3-6 3V7z"/><path d="M9 4v13M15 7v13"/></svg>
+    <span class="blabel">地图模式</span>
+  </span>
+  <span class="bico" title="刷新" onclick="location.reload()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+    <span class="blabel">刷新</span>
+  </span>
+  <span class="bico" title="帮助" onclick="toggleHelp(true)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><g transform="translate(12 12) scale(1.35) translate(-12 -12)"><path vector-effect="non-scaling-stroke" d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path vector-effect="non-scaling-stroke" d="M12 17h.01"/></g></svg>
+    <span class="blabel">帮助</span>
+  </span>
+</div>
+
+<div class="wallcount" id="wallcount"></div>
+
+<div class="focus-card" id="focusCard">
+  <div class="fc-line"></div>
+  <div class="fc-body">
+    <div class="fc-anim fc-date" id="fcDate"></div>
+    <div class="fc-anim fc-place" id="fcPlace"></div>
+    <div class="fc-anim fc-source" id="fcSource"></div>
+    <div class="fc-anim fc-actions">
+    <button onclick="openFocusViewer()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s5-9 10-9 10 9 10 9-5 9-10 9-10-9-10-9z"/><circle cx="12" cy="12" r="3"/></svg>
+      查看大图
+    </button>
+    <button class="ghost" onclick="saveFocusPicture()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+      保存照片
+    </button>
+    </div>
+  </div>
+</div>
+
+<div class="thread" id="thread"></div>
+
+<section id="help" class="help" aria-hidden="true">
+  <div class="help-card">
+    <h2>家的记忆 · 怎么用</h2>
+    <ul>
+      <li><b>滚动 / 上下滑动</b> —— 沿照片墙移动时间</li>
+      <li><b>点击中央大图</b> —— 全屏预览，← → 翻看，Esc 返回</li>
+      <li><b>右侧标签</b> —— 按来源、人物、地点筛选</li>
+      <li><b>底部圆圈</b> —— 点开选「语音」或「文字」问家庭记忆（按 <b>/</b> 快速打字）</li>
+      <li><b>键盘 ← →</b> —— 在墙上逐张移动</li>
+    </ul>
+    <h3>试试这些提问</h3>
+    <div class="help-ex" id="helpEx"></div>
+    <button class="help-close" onclick="toggleHelp(false)">关闭</button>
+  </div>
+</section>
+
+<div class="qbox">
+  <button class="qb-main" id="qbMain" title="问问我们的家庭回忆" aria-label="问问我们的家庭回忆">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3z"/><path d="M19 11a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V23h2v-3.06A9 9 0 0 0 21 11h-2z"/></svg>
+  </button>
+  <div class="qb-opts" id="qbOpts" hidden>
+    <button class="qb-opt" id="qbVoice">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-5a3.5 3.5 0 0 0-7 0v5A3.5 3.5 0 0 0 12 15z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18.5V22"/></svg>
+      语音
+    </button>
+    <button class="qb-opt" id="qbText">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7 9h.01M11 9h.01M15 9h.01M7 13h.01M17 13h.01M9.5 13h5"/></svg>
+      文字
+    </button>
+  </div>
+  <div class="qb-input" id="qbInput" hidden>
+    <input id="q" placeholder="问问我们的家庭记忆……" autocomplete="off">
+    <button id="send">问</button>
+  </div>
+</div>
+
+<script src="/viewer.js?v=20260908b"></script>
+
+<script>
+const clockdate = document.getElementById('clockdate');
+const clocktime = document.getElementById('clocktime');
+const ribbonHome = document.getElementById('ribbon-home');
+const taglist = document.getElementById('taglist');
+const thread = document.getElementById('thread');
+const input = document.getElementById('q');
+const sendBtn = document.getElementById('send');
+const wallcount = document.getElementById('wallcount');
+
+// ===== 人脸优先裁切锚点（{assetId:[cx,cy]}，无人脸照片不在此表 → 前端回退居中裁） =====
+let facePos = {};
+fetch('/api/facepos').then(r => r.json()).then(d => {
+  if (d && d.anchor) facePos = d.anchor;
+}).catch(() => {});
+
+// ===== 时间戳：两行英文格式 =====
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function tick() {
+  const d = new Date();
+  const p = n => String(n).padStart(2,'0');
+  clockdate.textContent = `${MONTHS[d.getMonth()]} ${p(d.getDate())}, ${d.getFullYear()}`;
+  clocktime.textContent = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+tick(); setInterval(tick, 1000);
+
+// ===== 右侧标签（二级分类抽屉） =====
+// 一级只展示大类别（来源/人物/地点/场景/物品/活动），点击展开二级具体标签，
+// 解决 30+ 个场景标签平铺一眼看不完的问题；数量统一为墙面可见口径。
+let TAGS = [];        // TAGS[0] = 全部影像；后面是分组
+let tagSignature = '';
+let selectedTag = null;
+let openGroup = null;      // 默认全部收起，进入页面即「全部影像」态
+
+// 场景标签 → 语义分组（未映射的自动落入「其他」）
+const TAG_TO_GROUP = {
+  '旅行':'scene','江河':'scene','室内':'scene','山景':'scene','海景':'scene','夜景':'scene','雪景':'scene','建筑':'scene','花草':'scene',
+  '书包':'object','玩具':'object','灯笼':'object','婴儿车':'object','行李箱':'object','乐器':'object','风筝':'object',
+  '车辆':'object','火车':'object','飞机':'object','自行车':'object','游船':'object',
+  '美食':'activity','火锅':'activity','烧烤':'activity','帐篷':'activity','滑雪':'activity','气球':'activity','生日':'activity','宠物':'activity',
+  '合影':'moment','儿童':'moment','截图':'other'
+};
+const GROUP_META = [
+  { key:'source',   label:'来源 · 谁拍的' },
+  { key:'person',   label:'人物' },
+  { key:'location', label:'地点' },
+  { key:'scene',    label:'场景 · 风景' },
+  { key:'object',   label:'物品' },
+  { key:'activity', label:'美食 · 活动' },
+  { key:'moment',   label:'人物时刻' },
+  { key:'other',    label:'其他' }
+];
+
+// 2026-09-06：展开的二级分组自动折叠——点分组以外的地方（照片墙/空白/其他 UI）即收回。
+// taglist 内部所有点击处理函数都会 stopPropagation()，所以点到外面时才会执行折叠。
+document.addEventListener('click', e => {
+  if (!openGroup) return;
+  openGroup = null;
+  drawTags();
+});
+function drawTags() {
+  // 先构建到临时容器，与当前 DOM 结构逐一比较：  // 结构没变就完全不动 DOM —— 后台扫描计数变化触发的重绘曾把展开中的二级菜单
+  // 闪没又弹回（用户看到「自动收回去又展开」），滚动位置/hover 态也全丢。
+  const tmp = document.createElement('div');
+  buildTagsInto(tmp);
+  const cur = [...taglist.children];
+  const next = [...tmp.children];
+  const same = cur.length === next.length && cur.every((el, i) => el.outerHTML === next[i].outerHTML);
+  if (same) return;
+  // 结构真变了才重建：保留滚动位置（桌面纵向 / 手机横向）
+  const st = taglist.scrollTop, sl = taglist.scrollLeft;
+  taglist.innerHTML = '';
+  while (tmp.firstChild) taglist.appendChild(tmp.firstChild);
+  taglist.scrollTop = st; taglist.scrollLeft = sl;
+}
+function buildTagsInto(parent) {
+  // 2026-09-07 15:15：地图省级照片堆跳转带的是省名（如「江西」），地点组里只有市/景点级条目，
+  // 没有对应项 → 侧栏什么都不高亮，看不到「挂到哪了」。渲染期动态补当前选中项到所属组顶部：
+  // selectedTag 变化重绘时条件自然失效，项自动消失（纯渲染层注入，不污染 TAGS 数据）。
+  let TAGS_VIEW = TAGS;
+  if (selectedTag && selectedTag.cat && selectedTag.cat !== 'latest' && selectedTag.cat !== 'query') {
+    const own = t => t && t.cat === selectedTag.cat && t.value === selectedTag.value;
+    const hit = TAGS.some(g => own(g) || (g.items && g.items.some(own)));
+    if (!hit) {
+      const item = { label: selectedTag.value, cat: selectedTag.cat, value: selectedTag.value };
+      const gk = selectedTag.cat === 'location' ? 'location' : 'other';
+      if (TAGS.some(g => g.key === gk)) {
+        TAGS_VIEW = TAGS.map(g => g.key === gk ? { ...g, items: [item, ...(g.items || [])] } : g);
+      } else {
+        TAGS_VIEW = [...TAGS, { key: gk, label: gk, items: [item] }];
+      }
+    }
+  }
+  TAGS_VIEW.forEach((grp, gi) => {
+    if (gi === 0) {
+      // 「全部影像」一级平铺
+      const b = document.createElement('button');
+      b.className = 'tag all';
+      b.textContent = grp.label;
+      b.dataset.cat = 'latest'; b.dataset.value = '';
+      if (!selectedTag) b.classList.add('on');
+      b.onclick = (e) => {
+        e.stopPropagation();   // 避免 document 自动折叠监听器把当前状态清掉
+        document.querySelectorAll('.tag').forEach(x => x.classList.remove('on'));
+        b.classList.add('on');
+        selectedTag = null;
+        openGroup = null; drawTags();   // 点「全部影像」同时收起展开中的二级分组
+        fetch('/api/category', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cat:'latest',value:'',slim:1}) })
+          .then(r=>r.json()).then(d=>renderRibbon(d.assets||[]));
+      };
+      parent.appendChild(b);
+      return;
+    }
+    if (grp.cat) {
+      // 用户置顶的一级分类（分类管理里「层级=置顶」）
+      const b = document.createElement('button');
+      b.className = 'tag';
+      b.textContent = grp.label;
+      b.dataset.cat = grp.cat || '';
+      b.dataset.value = grp.value || '';
+      if (selectedTag && b.dataset.cat === selectedTag.cat && b.dataset.value === selectedTag.value) b.classList.add('on');
+      b.onclick = (e) => { e.stopPropagation(); tagClick(b, grp); openGroup = null; drawTags(); };   // 选中置顶一级项也收起其他展开组
+      parent.appendChild(b);
+      return;
+    }
+    if (!grp.items || !grp.items.length) return;
+    const head = document.createElement('button');
+    head.className = 'taggroup' + (openGroup === grp.key ? ' open' : '');
+    head.textContent = grp.label;
+    head.onclick = (e) => { e.stopPropagation(); openGroup = (openGroup === grp.key ? null : grp.key); drawTags(); };
+    const sub = document.createElement('div');
+    sub.className = 'tagsub' + (openGroup === grp.key ? ' open' : '');
+    grp.items.forEach(t => {
+      const b = document.createElement('button');
+      b.className = 'tag';
+      b.textContent = t.label;
+      b.dataset.cat = t.cat || '';
+      b.dataset.value = t.value || '';
+      if (selectedTag && b.dataset.cat === selectedTag.cat && b.dataset.value === selectedTag.value) b.classList.add('on');
+      // 选中二级标签后自动收起该组（抽屉保持整洁，只留一级组名）
+      b.onclick = (e) => { e.stopPropagation(); tagClick(b, t); openGroup = null; drawTags(); };
+      sub.appendChild(b);
+    });
+    parent.appendChild(head);
+    parent.appendChild(sub);
+  });
+}
+function tagClick(b, t) {
+  document.querySelectorAll('.tag').forEach(x => x.classList.remove('on'));
+  b.classList.add('on');
+  selectedTag = { cat: t.cat, value: t.value };
+  if (t.cat === 'query') return ask(t.value);
+  fetch('/api/category', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cat:t.cat,value:t.value,slim:1}) })
+    .then(r=>r.json()).then(d=>renderRibbon(d.assets||[]));
+}
+function buildTags(c) {
+  const layout = c.layout || {};
+  // 组名优先用服务端 groups（总库侧栏双击改名 → group_label_v0）；自定义分类一律一级平铺，不再单独分组
+  const GMETA = (c.groups && c.groups.length) ? c.groups : GROUP_META;
+  const LAY = (kind, key, fb) => (layout[kind] && layout[kind][key]) ? layout[kind][key] : { parent:fb, sort:0, show:1 };
+  const groups = {};
+  GMETA.forEach(m => groups[m.key] = { key:m.key, label:m.label, items:[] });
+  const tops = [];   // 置顶一级项（含自定义分类）
+  const place = (kind, key, item, fbParent) => {
+    let lay = LAY(kind, key, fbParent);
+    if (lay.parent === 'custom') lay = { ...lay, parent: '' };  // 旧「我的分类」组数据兼容 → 一级平铺
+    if (!lay.show) return;             // 首页显示开关：关闭的分类不显示
+    item.sort = lay.sort || 0;
+    if (!lay.parent) tops.push(item);  // 置顶 → 一级平铺
+    else if (groups[lay.parent]) groups[lay.parent].items.push(item);
+    else (groups[lay.parent] = { key:lay.parent, label:lay.parent, items:[] }).items.push(item);
+  };
+  (c.sources||[]).filter(s=>s.count>0).forEach(s => groups.source.items.push({
+    label:s.display_name, cat:'member', value:s.display_name
+  }));
+  (c.persons||[]).filter(p=>p.count>0).forEach(p => place('person', p.person_id, {
+    label:p.display_name, cat:'person', value:p.display_name
+  }, 'person'));
+  // 地点改为动态（asset_geo_v0 region），不再硬编码新疆/江西
+  (c.locations||[]).filter(l=>l.count>0 && l.region).forEach(l => place('location', l.region, {
+    label:l.region, cat:'location', value:l.region
+  }, 'location'));
+  // 多标签：一张照片可同时挂 合影/旅行/山景/海景 多个标签（scene_tag_v0 多对多）
+  (c.scenes||[]).filter(s=>s.count>0).forEach(s => place('scene', s.tag, {
+    label:s.tag, cat:'scene', value:s.tag
+  }, TAG_TO_GROUP[s.tag] || 'other'));
+  groups.moment.items.push({ label:'家人',cat:'query',value:'家人' });
+  groups.moment.items.push({ label:'孩子',cat:'query',value:'孩子' });
+  // 自定义分类（用户在「家庭影像总库」手动创建并维护的分类，名称/数据与总库完全同步）→ 一级平铺
+  (c.customs||[]).forEach(x => place('custom', x.category_id, {
+    label:x.name, cat:'custom', value:x.category_id
+  }, 'custom'));
+  tops.sort((a,b)=>a.sort-b.sort);
+  Object.values(groups).forEach(g => g.items.sort((a,b)=>a.sort-b.sort));
+  return [
+    { label:'全部影像', cat:'latest', value:'' },
+    ...tops,
+    ...GMETA.map(m => groups[m.key]).filter(g => g.items.length)
+  ];
+}
+function refreshTags() {
+  return fetch('/api/categories',{method:'POST'}).then(r=>r.json()).then(c => {
+    const sig = JSON.stringify([c.total||0, c.persons||[], c.sources||[], c.locations||[], c.scenes||[], c.customs||[], c.layout||{}]);
+    if (sig === tagSignature) return;
+    const first = tagSignature === '';
+    tagSignature = sig;
+    TAGS = buildTags(c);
+    drawTags();
+    if (!first && selectedTag && (selectedTag.cat === 'person' || selectedTag.cat === 'custom')) {
+      const still = TAGS.some(g => g.items && g.items.some(t => t.cat === selectedTag.cat && t.value === selectedTag.value));
+      if (!still) selectedTag = null; // 已选中的人物/自定义分类被删除时回到全部
+    }
+  }).catch(() => {});
+}
+refreshTags();
+setInterval(refreshTags, 30000);
+// 2026-09-07 13:10：地图模式点照片堆 → 跳回首页带 ?cat=location&value=XX，自动选中该地点渲染照片走廊
+// selectedTag 在 refreshTags 的 fetch 回来前同步置好，drawTags 会给匹配标签加 .on 高亮
+(function(){
+  const qp = new URLSearchParams(location.search);
+  const cat = qp.get('cat'), value = qp.get('value') || '';
+  if (!cat || cat === 'query') return;
+  selectedTag = { cat, value };
+  // 省级堆跳转的省名是动态补进地点组的——自动展开该组，落点一眼可见
+  if (cat === 'location') openGroup = 'location';
+  fetch('/api/category', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cat, value, slim:1}) })
+    .then(r=>r.json()).then(d=>renderRibbon(d.assets||[]));
+})();
+
+// ===== 照片墙：Every Second 式连续滚动画廊 =====
+// 排版 = 参考截图原版：右上堆 15 张 + 中央大图 + 左下堆 15 张
+// 动效 = 整条廊带连续滚动（浮点槽位 + rAF 惯性）
+const CLUSTER_RX = -35;          // 整场景俯视倾角（原版 3D 表现）
+const WALL_HALF = 15;            // 中心槽位
+const POOL_MARGIN = 3;           // 两侧缓冲槽位数
+// 快速滚动时整体翘起：所有照片一起绕底边 rotateX，慢速/静止时不翘
+const TILT_MAX = 11;             // 最大翘起角度（度）——加大让翘起更可见
+const TILT_SMOOTH = 0.22;        // 速度平滑系数
+const TILT_SIGN = -1;            // -1: 向前滚（下一张）底部翘起；方向不对翻 1
+const TILT_GAIN = 170;           // 速度→角度增益（提高灵敏度）
+const TILT_VEL_MIN = 0.005;      // 快速阈值降低：慢速也轻微翘，静止才完全平放
+const WALL_FOLLOW = 0.15;       // 指数平滑跟手系数（越大越跟手；连续滚轮不顿挫）
+const SNAP_IDLE_MS = 180;       // 滚轮空闲多久后 snap 到最近整数槽位
+
+// 聚焦模式（参考图）：点中心照片 → 整面散开为中心大图 + 对角两堆叠
+// 中心图保持斜置悬浮（rotateY -45°→-26° 部分回正 + 保留轻微俯角 + 适中放大），
+// 与放大在同一时间线内并行推进；退出聚焦：点击空白 / 滚轮 / Escape / 方向键，反向动画
+let allLandscape = [];
+let wallOffset = 15;
+let wallTarget = 15;
+let firstRibbon = true;          // 首次进页随机中心照片的开关（只在初始「全部影像」时用一次）
+let wallAnimating = false;
+let hoverIdx = -1;
+let wallVelocity = 0;            // 平滑后的每帧位移（用于翘起方向）
+let lastWallOffset = wallOffset;
+let lastStepTs = 0;              // 最近一次 stepWall 时间（用于 snap 空闲判定）
+let focusT = 0;                  // 聚焦进度 0..1（0=墙面态，1=完全聚焦）
+let focusTarget = 0;             // 目标值 0/1
+let focusEntering = false;       // 是否处于进入动画中（防止点击瞬时连开 viewer）
+const FOCUS_STEP = 0.018;        // 每帧推进量（60fps 下约 926ms 完成），进入聚焦更从容
+const FOCUS_STEP_OUT = 0.0125;   // 退出聚焦（缩小方向）单独放慢：约 1.33s，2026-09-04 用户反馈「缩小还是快了一点」
+let cbT = 0;                     // 中心照片放大进度 0..1（0=与牌堆同尺寸同角度，1=转正放大）
+let cbTarget = 0;                // 目标值 0/1
+let cbPending = false;           // 聚焦态滑动换张：落定后重新放大新中心照片
+let travel = null;               // 聚焦态换张旅行：{from,to}——滑回牌堆与缩小共用 cb 一条时间线，同步走完（2026-09-04 用户要求）
+const CB_STEP = 0.015;           // 每帧推进量（60fps 下约 1.11s 完成），缩回/放大更从容
+
+// ===== 移动端适配：窄屏基准 =====
+// 桌面墙基尺寸 = 21vw；手机竖屏 390px 下 21vw 仅 82px 太小，改用屏宽/屏高混合基准
+function isNarrow() { return innerWidth < 640; }
+function wallBaseW() {
+  if (isNarrow()) return Math.min(innerWidth * 0.44, innerHeight * 0.26);
+  return 21 * innerWidth / 100;
+}
+
+// 映射任意浮点槽位 s 到布局（s=15 中央大图；s<15 右上堆；s>15 左下堆）
+// 槽位坐标来自参考截图实测：右上堆 y=2→23、x=96.3-0.96y；左下堆 y=77→98、x=96.3-0.96y
+function slotLayout(s) {
+  const vw = innerWidth / 100;
+  const vh = innerHeight / 100;
+  let xp, yp;
+  if (s <= 14) {
+    const t = s / 14;          // 0=右上堆顶，1=堆底（靠中心）
+    yp = 2 + 21 * t;
+    xp = 96.3 - 0.96 * yp;
+  } else if (s >= 16) {
+    const t = (s - 16) / 14;   // 0=靠中心，1=左下堆底
+    yp = 77 + 21 * t;
+    xp = 96.3 - 0.96 * yp;
+  } else {
+    // 中心聚焦区 14..16：从堆末端穿过中央大图再到另一堆
+    if (s <= 15) {
+      const t = s - 14;        // 0..1
+      xp = 74.2 + (50 - 74.2) * t;
+      yp = 23 + (50 - 23) * t;
+    } else {
+      const t = s - 15;        // 0..1
+      xp = 50 + (22.5 - 50) * t;
+      yp = 50 + (77 - 50) * t;
+    }
+  }
+  const x = (xp - 50) * vw;
+  const y = (yp - 50) * vh;
+  const d = Math.abs(s - 15);
+  const cf = Math.max(0, 1 - Math.min(d, 2.4) / 2.4); // 中心聚焦因子
+  const ry = -45;                // 统一透视角度：所有照片同一倾斜角
+  const z = -(20 + d * 5) * (1 - cf * 0.6);
+  const zIdx = Math.round(900 - d * 8);   // 中央 900
+  const opacity = (d > 18) ? Math.max(0, 1 - (d - 18) / 4) : 1;
+  return { x, y, ry, z, zIdx, opacity, cf };
+}
+
+// 墙面统一横版 16:9（2026-08-29 用户拍板）：竖版照片经 object-fit:cover 居中裁切为横版，
+// 不再按原始比例竖挂；大图查看器仍按原图完整展示
+function assetAspect(a) {
+  return 1.78;
+}
+
+  // 翻阅 overshoot 曲线：模拟从牌堆抽出一张翻开的弹性过冲
+// t=0→0, t≈0.65 过冲到 ~1.28, t=1 settling 到 1
+function flipEase(t) {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  return t + Math.sin(t * Math.PI) * 0.28;
+}
+
+// 聚焦态位置计算（focusT=1 时）：中心大图完全转正（rotateY=0、抵消全部俯角）
+// 并放大到约 2 倍，占据屏幕中部大部分空间；两侧堆叠收紧间距（角度不变），
+// 把中间空间让给放大图。转正与放大随 focusT 同步并行推进。
+// fs = s - WALL_HALF；0=中心，负=右上堆，正=左下堆
+// 中心照片 cb 进度参数（focusLayout 与渲染循环共用同一组值，保证各处严格同步）：
+// cb = cbT 的 easeInOutCubic（尺寸/俯角进度）；cbRy 用 acos 把 cos（旋转的视觉
+// 宽度贡献）线性映射到 cb 上 —— 旋转引起的宽度变化与 scale 逐帧同步、同刻完成。
+function cbParams() {
+  const r = Math.min(1, Math.max(0, cbT));
+  const cb = r < 0.5 ? 4 * r * r * r : 1 - Math.pow(-2 * r + 2, 3) / 2;
+  const COS45 = 0.70710678;
+  const cbRy = -Math.acos(Math.min(1, COS45 + (1 - COS45) * cb)) * 180 / Math.PI;
+  const bigScale = isNarrow() ? 1.4 : 2.3;
+  return { cb, cbScale: 1 + (bigScale - 1) * cb, cbRy, cbZ: -40 + 130 * cb };
+}
+
+function focusLayout(fs) {
+  const vw = innerWidth / 100;
+  const vh = innerHeight / 100;
+  const dist = Math.abs(fs);
+  if (dist > 40) return null;            // 每侧 40 张组成紧密牌堆，延伸出屏
+  // 中心放大参数（2026-09-04 用户反馈缩回时「抽风」）：cbT 先做 easeInOutCubic 缓动，
+  // 且效果连续贯穿 |fs|<1 整个过渡段 —— 照片滑过中心时尺寸/角度/高度随 dist 连续变化。
+  // 旧版只有 fs===0 槽位吃 cb，照片滑离中心的瞬间 scale/rotateX 跳变，肉眼可见抽动。
+  const { cb, cbScale, cbRy, cbZ } = cbParams();
+  const cbY = -4 * vh * cb;
+  if (dist < 1) {
+    // 中心槽与牌堆内端之间的连续过渡（滑动换张时照片沿对角线穿过中央，不跳变）
+    // 大小与角度同步变化（2026-09-04 用户拍板）：怎么放大就怎么缩回——
+    // 缩回段 cb 1→0，scale 与 ry 同步走完，不做「先缩完再转」的先后拆分；
+    // 0<|fs|<1 为中心槽与牌堆之间的连续过渡（滑动换张时照片沿对角线穿过中央，不跳变）；
+    // 换张改由 travel 时钟驱动（滑回与缩小同步），此处过渡段仅用于进出聚焦/边界连续性。
+    const W = innerWidth, H = innerHeight;
+    const L = Math.hypot(W, H);
+    const tInner = 0.99 * L - 39 * 0.016 * L;   // 牌堆最内侧端点（与下方 T_OUTER/step 一致）
+    const sgn = (fs < 0) ? 1 : -1;
+    return {
+      x: sgn * (W / L) * tInner * dist,
+      y: -sgn * (H / L) * tInner * dist + cbY * (1 - dist),
+      z: cbZ + (-40 - cbZ) * dist,
+      ry: cbRy + (-45 - cbRy) * dist,
+      scale: cbScale + (1 - cbScale) * dist,
+      zIdx: Math.round(2000 - 530 * dist),
+      visible: true
+    };
+  }
+  // 收望远镜模型（2026-09-04 用户拍板）：所有照片同角度(-45°)同尺寸，位移全部在世界坐标系。
+  // 目标位置一次性算死、不随 focusT 变动：进入聚焦 = 从墙面位置直线滑向牌堆位，
+  // 杜绝「先缩向中心再弹出」的 S 弯（旧版 stepWide=0.05L 时最内侧目标 t 为负、
+  // 飞到对角线反方向，2026-09-04 已踩坑）。
+  const W = innerWidth, H = innerHeight;
+  const L = Math.hypot(W, H);
+  const ux = W / L, uy = H / L;          // 对角线单位分量
+  const T_OUTER = 0.99 * L;              // 最外侧那张：钉死在距中心 99% 对角线处（角落），全程不动
+  const step = 0.016 * L;                // 牌堆间距（收紧态）
+  const t = T_OUTER - (40 - dist) * step;
+  const sgn = (fs < 0) ? 1 : -1;         // fs<0 → 右上堆（沿 +对角线）；fs>0 → 左下堆
+  return { x: sgn * ux * t, y: -sgn * uy * t, z: -40, ry: -45, scale: 1, zIdx: 1500 - dist * 30, visible: true };
+}
+
+const elsByIdx = new Map();
+const freeEls = [];
+function createPhotoEl() {
+  const el = document.createElement('div');
+  el.className = 'photo';
+  el.innerHTML = '<div class="ph-float"><div class="ph-enter"><img loading="eager" src="" alt="" onerror="this.closest(\'.photo\')?.remove()"></div></div>';
+  el.style.position = 'absolute';
+  el.style.left = '50%';
+  el.style.top = '50%';
+  el.style.opacity = '0';
+  el.style.pointerEvents = 'none';
+  el.onmouseenter = () => hoverOn(+el.dataset.idx);
+  el.onmouseleave = hoverOff;
+  el.onclick = (e) => {
+    e.stopPropagation();
+    const idx = +el.dataset.idx;
+    const isCenterNow = Math.abs(idx - wallOffset) < 0.55;
+    if (focusT > 0.5) {
+      // 已聚焦态：点中心 → 开大图查看器；点两侧 → 保持聚焦，
+      // 滑回牌堆与缩小同步走完（travel 驱动），落定后新中心照片再放大
+      if (travel) return;   // 旅行进行中忽略点击，防状态打架
+      if (isCenterNow) openViewer(idx);
+      else { travel = { from: Math.round(wallOffset), to: idx }; cbTarget = 0; cbPending = true; beginWallAnim(); }
+    } else if (focusTarget === 0 && isCenterNow && !travel) {
+      // 墙态：只有点击中心照片才进入聚焦
+      enterFocus();
+    }
+  };
+  return el;
+}
+function ensureEl(idx) {
+  if (elsByIdx.has(idx)) return elsByIdx.get(idx);
+  const a = allLandscape[idx];
+  if (!a) return null;
+  const el = freeEls.pop() || createPhotoEl();
+  const staleVid = el.querySelector('video.ph-live');
+  if (staleVid) { staleVid.pause(); staleVid.remove(); }   // 复用元素清理上次实播层
+  elsByIdx.set(idx, el);
+  ribbonHome.appendChild(el);   // 挂载到 DOM（已在 DOM 的元素是幂等移动）
+  el.dataset.idx = idx;
+  el.dataset.hi = '';           // 元素换绑新照片时重置高清标记（会重新拉 480px 档）
+  const img = el.querySelector('img');
+  // 2026-09-01：卡片只渲染 ~233px，拉 480px 档（~40KB）足够 Retina；
+  // 原来固定拉 1600px 档（470KB/张），首页 34 张 = 15.6MB，是"加载卡"的主因
+  img.src = '/thumb?asset=' + a.id + '&edge=480';
+  // 人脸优先裁切：竖版照片裁 16:9 时把人脸中心对到可视区（无人脸数据回退居中）
+  const fp = facePos[a.id];
+  img.style.objectPosition = fp ? `${(fp[0] * 100).toFixed(1)}% ${(fp[1] * 100).toFixed(1)}%` : '50% 50%';
+  el.classList.toggle('video', a.type === 'video');
+  const floatEl = el.querySelector('.ph-float');
+  const hasVid = !!floatEl.querySelector('.ph-vid');
+  if (a.type === 'video' && !hasVid) {
+    const v = document.createElement('div');
+    v.className = 'ph-vid';
+    v.innerHTML = '<span class="ph-play">▶</span>';
+    floatEl.appendChild(v);
+  } else if (a.type !== 'video' && hasVid) {
+    floatEl.querySelector('.ph-vid').remove();
+  }
+  return el;
+}
+
+function renderRibbon(assets) {
+  // 全部统一横版 16:9 呈现：竖版照片居中裁切，视频保留 ▶ 徽章
+  allLandscape = assets.filter(a => !a.hidden);
+  // 回收所有 DOM 元素
+  elsByIdx.forEach(el => { el.style.opacity = '0'; el.style.pointerEvents = 'none'; el.remove(); freeEls.push(el); });
+  elsByIdx.clear();
+  const maxStart = Math.max(0, allLandscape.length - 1);
+  // 首次进页（「全部影像」初始加载）中心照片随机：每次打开/回到首页都是不同的一张。
+  // 之后切分类、问答检索仍从头部开始（用户有明确的「最新/结果开头」预期）。
+  if (firstRibbon && allLandscape.length > 40) {
+    const lo = 8, hi = allLandscape.length - 9;   // 两端各留 8 张，保证中心图两侧牌堆完整
+    wallOffset = lo + Math.floor(Math.random() * (hi - lo + 1));
+  } else {
+    wallOffset = Math.min(WALL_HALF, maxStart);
+  }
+  firstRibbon = false;
+  wallTarget = wallOffset;
+  wallAnimating = false;
+  wallVelocity = 0;
+  lastWallOffset = wallOffset;
+  lastStepTs = 0;
+  // 切换分类时重置聚焦态
+  focusT = 0;
+  focusTarget = 0;
+  focusEntering = false;
+  cbT = 0; cbTarget = 0; cbPending = false; travel = null;
+  const vids = allLandscape.filter(a => a.type === 'video').length;
+  wallcount.textContent = allLandscape.length
+    ? `墙上 ${allLandscape.length} 项 · 照片 ${allLandscape.length - vids} · 视频 ${vids}`
+    : '没有可展示的影像';
+  updateWall();
+}
+
+function updateWall() {
+  // 平滑当前帧速度，用于"快速滚动时整体翘起"；wallOffset 不动时自动回归 0
+  const rawVel = wallOffset - lastWallOffset;
+  wallVelocity += (rawVel - wallVelocity) * TILT_SMOOTH;
+  lastWallOffset = wallOffset;
+  // 翘起角度：只在快速滚动（|vel|>阈值）时非零，慢速/静止时完全平放
+  let tilt = 0;
+  if (Math.abs(wallVelocity) > TILT_VEL_MIN) {
+    tilt = Math.max(-TILT_MAX, Math.min(TILT_MAX, TILT_SIGN * wallVelocity * TILT_GAIN));
+  }
+  const base = Math.floor(wallOffset);
+  // 聚焦态下牌堆需要每侧 40 张，扩大元素池（平时只留 3 张缓冲）
+  const poolMargin = (focusTarget === 1 || focusT > 0) ? 25 : POOL_MARGIN;
+  const visibleMin = base - WALL_HALF - poolMargin;
+  const visibleMax = base + WALL_HALF + poolMargin;
+  // 移除已离屏的元素
+  for (const [idx, el] of elsByIdx) {
+    if (idx < visibleMin || idx > visibleMax) {
+      el.style.opacity = '0';
+      el.style.pointerEvents = 'none';
+      el.remove();              // 从 DOM 摘除
+      freeEls.push(el);
+      elsByIdx.delete(idx);
+    }
+  }
+  // 更新/添加可见元素
+  for (let idx = visibleMin; idx <= visibleMax; idx++) {
+    if (idx < 0 || idx >= allLandscape.length) continue;
+    const el = ensureEl(idx);
+    if (!el) continue;
+    const s = idx - wallOffset + WALL_HALF;
+    const b = slotLayout(s);
+    const ad = Math.abs(s - WALL_HALF);
+    // 统一横版 16:9 排版：竖版照片由 CSS 居中裁切，墙面整齐
+    const ar = assetAspect(allLandscape[idx]);
+    const baseW = wallBaseW();
+    const AREA = baseW * (baseW / 1.78);
+    const wallScale = 1 + b.cf * 0.26;
+    // 聚焦态位置（focusT>0 时）：中心大图 + 对角两堆叠
+    const fs = s - WALL_HALF;
+    const fp = focusLayout(fs);
+    let xPos = b.x, yPos = b.y, zPos = b.z, ryVal = b.ry, sc = wallScale, zI = b.zIdx;
+    if (fp && focusT > 0) {
+      // easeInOutCubic：与 focusLayout 的 stepCur 同一条缓动曲线，整体节奏从容（参考图质感）
+      const eT = focusT < 0.5 ? 4 * focusT * focusT * focusT : 1 - Math.pow(-2 * focusT + 2, 3) / 2;
+      // 堆叠照片（fs≠0）尺寸/深度提前并拢：进入动画前半程就全部变回 1 倍，
+      // 过渡段里不再出现「靠中心的照片偏大」（2026-09-04 用户截图反馈）
+      const eS = Math.min(1, eT * 2.2);
+      // 中心图同步动画：一边转正（ry→0）一边放大，同一进度并行推进
+      xPos = b.x + (fp.x - b.x) * eT;
+      yPos = b.y + (fp.y - b.y) * eT;   // 牌堆沿对角线滑向最外侧（2026-09-04 最终方案：斜线方向收拢）
+      zPos = b.z + (fp.z - b.z) * (fs === 0 ? eT : eS);
+      // 中心照片：进入聚焦保留翻阅 overshoot 弹性；退出聚焦改用与位置/尺寸
+      // 同一条 eT 曲线（2026-09-04 用户反馈「缩小完成还在旋转」——flipEase 的
+      // sin 尾巴让角度在整体落定后仍在动，退出方向必须严格同步）
+      if (fs === 0) {
+        const rr = (focusTarget === 1) ? flipEase(focusT) : eT;
+        ryVal = b.ry + (fp.ry - b.ry) * rr;
+      } else {
+        ryVal = b.ry + (fp.ry - b.ry) * eT;
+      }
+      sc = wallScale + (fp.scale - wallScale) * (fs === 0 ? eT : eS);
+      zI = Math.round(b.zIdx + (fp.zIdx - b.zIdx) * focusT);
+    } else if (focusT > 0 && !fp) {
+      // 聚焦态下超出 ±6 范围的：保持墙面位置但快速淡出（不参与交互）
+      sc = wallScale * (1 - focusT * 0.3);
+    }
+    // 聚焦态换张旅行中（2026-09-04 用户要求「滑回牌堆和缩小同步走完」）：
+    // 位置/大小/角度全部由 u=1-cbE 一条时间线驱动 —— u=0 在中心（大、正），
+    // u=1 到达牌堆目标槽位（同大、-45°）；wallOffset 也由同一时钟驱动（见 wallLoop），
+    // 几何位置与姿态天然锁定，同刻开始、同刻完成，无先缩完再滑的两段感。
+    let travelU = null;
+    if (travel && idx === travel.from) {
+      const rt = Math.min(1, Math.max(0, cbT));
+      const e2 = rt < 0.5 ? 4 * rt * rt * rt : 1 - Math.pow(-2 * rt + 2, 3) / 2;
+      travelU = 1 - e2;
+      const cp = cbParams();
+      const sgnT = (travel.to > travel.from) ? 1 : -1;
+      const W2 = innerWidth, H2 = innerHeight, L2 = Math.hypot(W2, H2);
+      const tEnd = 0.99 * L2 - (40 - Math.abs(travel.to - travel.from)) * 0.016 * L2;  // 目标槽位沿对角线距离
+      xPos = sgnT * (W2 / L2) * tEnd * travelU;
+      yPos = -sgnT * (H2 / L2) * tEnd * travelU + (-4 * (H2 / 100) * cp.cb) * (1 - travelU);
+      zPos = cp.cbZ * (1 - travelU) + (-40) * travelU;
+      ryVal = cp.cbRy * (1 - travelU) + (-45) * travelU;
+      sc = cp.cbScale * (1 - travelU) + 1 * travelU;
+      zI = Math.round(2000 * (1 - travelU) + (1500 - Math.abs(travel.to - travel.from) * 30) * travelU);
+    }
+    // 聚焦态下：仅中心和堆叠中照片可点，墙态下按原逻辑
+    const isFocusPoint = focusT > 0.3 && fp;
+    const isCenter = ad < 0.55;
+    // 透明度：墙态用 slotLayout 自己的渐隐；聚焦态下 ±26 范围内不透明（覆盖 slotLayout 的 d>18 渐隐），超出→0
+    let op = b.opacity;
+    if (focusT > 0) {
+      const inRange = Math.abs(fs) <= 40;   // 与 focusLayout 的 ±40 牌堆范围对齐，超出的淡出
+      op = inRange ? Math.max(b.opacity, focusT) : b.opacity * Math.max(0, 1 - focusT);
+    }
+    const w = Math.sqrt(AREA * ar) * sc;
+    const h = w / ar;
+    el.style.width = w + 'px';
+    el.style.height = h + 'px';
+    el.style.marginLeft = (-w / 2) + 'px';
+    el.style.marginTop = (-h / 2) + 'px';
+    el.style.zIndex = zI;
+    el.style.opacity = op;
+    el.style.pointerEvents = (isFocusPoint || (!focusTarget && isCenter)) ? 'auto' : 'none';
+    el.classList.toggle('focus', (isCenter && !focusTarget) || (isFocusPoint && fs === 0));
+    // 聚焦态下牌堆照片几乎不压暗（参考图里牌堆是全亮的）
+    el.style.filter = (focusT > 0.2 && fs !== 0) ? `brightness(${0.95 + (1 - focusT) * 0.05})` : '';
+    // 中心图完全转正：rotateY 归零、俯角归零（2026-09-04 用户要求「完全变正」）。
+    // 俯角恢复进度 = cbE（cbT 的 easeInOutCubic，与 scale 同一条曲线）：
+    // 旋转、俯角、大小三者同刻开始、同刻完成（2026-09-04 用户拍板「缩小完成旋转也刚好完成」）。
+    const cbEr = Math.min(1, Math.max(0, cbT));
+    const cbE = cbEr < 0.5 ? 4 * cbEr * cbEr * cbEr : 1 - Math.pow(-2 * cbEr + 2, 3) / 2;
+    // 旅行中照片的 ad 是几何值、与姿态时钟脱节，俯角恢复改由 (1-travelU)=cbE 驱动
+    const tStraightC = (focusT > 0) ? focusT * cbE * (travelU !== null ? 1 : Math.max(0, 1 - ad)) : 0;
+    let outerRX = CLUSTER_RX * (1 - tStraightC);
+    // 中心照片翻阅翻起：照片上部向前掀起（像真的从牌堆抽出一张翻开）
+    if (fs === 0 && focusT > 0) {
+      outerRX += 22 * Math.sin(focusT * Math.PI) * Math.max(0, 1 - ad);
+    }
+    // 牌堆本地偏移：在旋转后的本地坐标系里沿「右+上」（右上堆）/「左+下」（左下堆）
+    // 各偏移一小步 → 上一张只露一条窄边，堆成参考图的实体牌堆
+    let localT = '';
+    if (fp && focusT > 0 && fs !== 0 && fp.lk && travelU === null) {
+      const kk = fp.lk * focusT;
+      const sgn = fs < 0 ? 1 : -1;
+      localT = ` translate3d(${(20 * kk * sgn).toFixed(1)}px,${(-20 * kk * sgn).toFixed(1)}px,0)`;
+    }
+    el.style.transform = `translate3d(${xPos.toFixed(1)}px,${yPos.toFixed(1)}px,${zPos.toFixed(1)}px) perspective(1100px) rotateX(${outerRX.toFixed(2)}deg) rotateY(${ryVal.toFixed(2)}deg)` + localT;
+    // 内层只保留滚速翘起 tilt；转正过程内层同步归零（俯角已由外层消化）
+    const fEl = el.querySelector('.ph-float');
+    if (fEl) {
+      const localRX = tilt * (1 - tStraightC);
+      fEl.style.transform = `rotateX(${localRX.toFixed(2)}deg)`;
+    }
+  }
+
+  // 更新聚焦态信息卡片
+  // 中心视频实播开关：聚焦且放大完成才播，其余状态（缩回/滑动/退出）停播
+  setCenterVideo(focusT > 0.98 && cbT > 0.98);
+  updateFocusCard();
+}
+
+let fcShownIdx = null;           // 已播放入场动画的照片 idx（换图落定后逐行重播）
+function updateFocusCard() {
+  const card = document.getElementById('focusCard');
+  if (!card) return;
+  // 照片基本到位（focusT>0.95）才显示，避免文字在照片飞行途中就浮现
+  const show = focusTarget === 1 && focusT > 0.95;
+  card.classList.toggle('visible', show);
+  if (!show) { fcShownIdx = null; return; }
+  if (!allLandscape.length) return;
+  const idx = Math.max(0, Math.min(allLandscape.length - 1, Math.round(wallOffset)));
+  const a = allLandscape[idx];
+  if (!a) return;
+  // 滑动途中不动文字（避免日期随中间槽位连闪），落定后一并更新并逐行入场
+  const settled = Math.abs(wallOffset - wallTarget) < 0.05;
+  if (!settled) return;
+  // 动态锚定：文字块顶边贴在照片底边下方 18px，竖线(top:-18px)从照片底边连续延伸下来
+  const photoEl = elsByIdx.get(idx);
+  if (photoEl) {
+    card.style.top = (photoEl.getBoundingClientRect().bottom + 18) + 'px';
+  }
+  const dateEl = document.getElementById('fcDate');
+  const placeEl = document.getElementById('fcPlace');
+  const sourceEl = document.getElementById('fcSource');
+  if (dateEl) dateEl.textContent = formatFocusDate(a.time);
+  // 大字 = 省级（新疆/江西…），第三行 = 具体拍摄地点（乐平/景德镇/吐鲁番…）
+  if (placeEl) placeEl.textContent = a.province || a.region || a.city || a.location || '地点未知';
+  if (sourceEl) {
+    const parts = [];
+    if (a.region && a.region !== (a.province || a.region)) parts.push(a.region);  // 具体地点（与省份不同级才显示）
+    if (a.persons && a.persons.length) parts.push(a.persons.slice(0, 3).join('、'));
+    sourceEl.textContent = parts.join(' · ');
+  }
+  // 换图落定后逐行入场（参考 every : second）：竖线生长 → 时间/地点/来源/操作依次上浮
+  if (fcShownIdx !== idx) {
+    fcShownIdx = idx;
+    const anims = card.querySelectorAll('.fc-line, .fc-anim');
+    const delays = [0, .1, .18, .26, .36];
+    anims.forEach((el, i) => {
+      el.style.animationDelay = (delays[i] || 0) + 's';
+      el.classList.remove('in');
+      void el.offsetWidth;          // 强制 reflow 重启动画
+      el.classList.add('in');
+    });
+  }
+}
+
+function formatFocusDate(t) {
+  // 拍摄时间（media_asset.capture_time）。三种形态：
+  // 纯日期 "2026-07-30" → 只显示日期（以前 new Date 当 UTC 零点，东八区假显 08:00:00 am）
+  // 完整 "2026-07-30T14:23:05" → 日期 + 时刻
+  // 空/无效/全零占位（0000-00-00…）→ 时间待确认
+  const s = String(t || '');
+  if (!s || /^0000-/.test(s)) return '时间待确认';
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const d = new Date(dateOnly ? s + 'T00:00:00' : s);
+  if (isNaN(d)) return '时间待确认';
+  const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+  const day = String(d.getDate()).padStart(2, '0');
+  const y = d.getFullYear();
+  if (dateOnly) return `${mon} ${day}, ${y}`;
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const sec = String(d.getSeconds()).padStart(2, '0');
+  const ampm = d.getHours() >= 12 ? 'pm' : 'am';
+  return `${mon} ${day}, ${y}  ${h}:${m}:${sec} ${ampm}`;
+}
+
+function openFocusViewer() {
+  if (!allLandscape.length) return;
+  const idx = Math.max(0, Math.min(allLandscape.length - 1, Math.round(wallOffset)));
+  openViewer(idx);
+}
+function saveFocusPicture() {
+  if (!allLandscape.length) return;
+  const idx = Math.max(0, Math.min(allLandscape.length - 1, Math.round(wallOffset)));
+  const a = allLandscape[idx];
+  if (!a) return;
+  const link = document.createElement('a');
+  link.href = `/orig?asset=${a.id}`;
+  link.download = a.filename || `photo-${a.id}`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function beginWallAnim() {
+  // 只负责确保 rAF 循环在跑；不再重置动画起点，连续滚轮才能跟手不顿挫
+  if (!wallAnimating) {
+    wallAnimating = true;
+    requestAnimationFrame(wallLoop);
+  }
+}
+
+let _origPrefetched = new Set();   // 已预取过原图的照片（HTTP 缓存 max-age=3600，查看器打开即命中）
+function enterFocus() {
+  focusTarget = 1;
+  cbTarget = 1; cbPending = false;
+  focusEntering = true;
+  document.body.classList.add('focused');
+  upgradeCenterRes();   // 中心照片将放大 2.3 倍，480px 缩略图会糊，换 1600px 档
+  // 2026-09-08 聚焦即预取原图：用户盯着放大图看的时候正是后台拉原图的黄金窗口，
+  // 之后点开查看器直接命中浏览器缓存（max-age=3600），原图层秒上。
+  try {
+    const a = allLandscape[Math.round(wallOffset)];
+    if (a && a.type !== 'video' && !_origPrefetched.has(a.id)) {
+      _origPrefetched.add(a.id);
+      if (_origPrefetched.size > 12) _origPrefetched.clear();   // 防长会话无限膨胀
+      new Image().src = '/orig?asset=' + a.id;
+    }
+  } catch (_) {}
+  setTimeout(() => { focusEntering = false; }, 800);   // 防止进入动画中误触开 viewer
+  beginWallAnim();
+}
+// 中心照片高清升级：预载完成再替换 src，避免大图未就绪时闪白
+function upgradeCenterRes() {
+  const idx = Math.round(wallOffset);
+  const el = elsByIdx.get(idx);
+  const a = allLandscape[idx];
+  if (!el || !a || el.dataset.hi === '1') return;
+  // 视频卡片不换高清图（聚焦放大时由实播层 <video> 接管），直接返回
+  if (a.type === 'video') return;
+  const img = el.querySelector('img');
+  if (!img) return;
+  el.dataset.hi = '1';
+  const hi = new Image();
+  // 2026-09-08 修放大过渡闪烁：decode() 确保新图位图完全解码后才换 src，
+  // 同帧完成重绘，不再有"旧图已清、新图未解码"的闪白空帧
+  const swap = () => { if (elsByIdx.get(idx) === el) img.src = hi.src; };
+  hi.onload = () => { (hi.decode ? hi.decode().then(swap).catch(swap) : swap()); };
+  // 2026-09-13 t1600 缓存修复：预热脚本误产的横躺暗图曾以 max-age=3600 缓存进
+  // 浏览器，加 v 参数换 URL 强制所有客户端立即拉取重生成后的正确文件
+  hi.src = '/thumb?asset=' + a.id + '&edge=1600&v=13';
+}
+
+// 聚焦放大完成 → 中心视频自动实播（静音循环，浏览器自动播放策略要求 muted）；
+// 缩回/退出/切走时停止并移除实播层，恢复封面。
+let centerVidOn = false;
+function setCenterVideo(on) {
+  if (on === centerVidOn) return;
+  centerVidOn = on;
+  const idx = Math.round(wallOffset);
+  const a = allLandscape[idx];
+  const el = elsByIdx.get(idx);
+  if (!el) return;
+  let vid = el.querySelector('video.ph-live');
+  if (on && a && a.type === 'video') {
+    if (!vid) {
+      vid = document.createElement('video');
+      vid.className = 'ph-live';
+      vid.src = '/orig?asset=' + a.id;
+      vid.muted = true; vid.loop = true; vid.autoplay = true;
+      vid.setAttribute('playsinline', '');
+      // 2026-09-04 原图已被外部删除 → 静默把整个视频卡片从墙上撤掉
+      vid.onerror = () => { const photo = el.closest('.photo'); if (photo) photo.remove(); };
+      el.appendChild(vid);
+    }
+    vid.play().catch(() => {});
+  } else if (vid) {
+    vid.pause();
+    vid.remove();
+  }
+}
+function exitFocus() {
+  focusTarget = 0;
+  cbTarget = 0; cbPending = false;
+  // travel 不清除：旅行由 cb 时钟驱动继续走完（cbT 绑定 focusT 归零时自然结束），
+  // 照片边滑回牌堆边缩小不会中断跳变
+  document.body.classList.remove('focused');
+  beginWallAnim();
+}
+function wallLoop() {
+  // 聚焦时间线推进（与墙面滚动并行；不依赖 diff 也不会静止后停摆）
+  if (Math.abs(focusT - focusTarget) > 0.001) {
+    const dir = focusTarget > focusT ? 1 : -1;
+    focusT += dir * (dir > 0 ? FOCUS_STEP : FOCUS_STEP_OUT);   // 缩小方向单独放慢
+    if ((dir > 0 && focusT > focusTarget) || (dir < 0 && focusT < focusTarget)) focusT = focusTarget;
+  }
+  // 中心照片放大时间线（与 focusT 并行推进）
+  if (focusTarget === 0) {
+    // 退出聚焦回墙态：cb 直接绑定 focusT 同一条时间线（2026-09-04 用户反馈
+    // 「角度和大小缩放时间不一样」）。旧版 cb 0.55s 先走完、focusT 0.93s 慢慢飘，
+    // 姿态先定而位置还在动，肉眼可见不同步。绑定后转角/大小/位置同一条曲线同步到位。
+    cbT = focusT;
+  } else if (Math.abs(cbT - cbTarget) > 0.001) {
+    const dir2 = cbTarget > cbT ? 1 : -1;
+    cbT += dir2 * CB_STEP;
+    if ((dir2 > 0 && cbT > cbTarget) || (dir2 < 0 && cbT < cbTarget)) cbT = cbTarget;
+  }
+  // 聚焦态换张旅行：wallOffset 直接由 cb 时钟驱动（与缩小同一条时间线），
+  // 滑回牌堆与缩小同步走完、同刻落定（2026-09-04 用户要求）。跳过指数跟随。
+  if (travel) {
+    const rt = Math.min(1, Math.max(0, cbT));
+    const eT2 = rt < 0.5 ? 4 * rt * rt * rt : 1 - Math.pow(-2 * rt + 2, 3) / 2;
+    wallOffset = travel.from + (travel.to - travel.from) * (1 - eT2);
+    wallTarget = travel.to;
+    if (cbT <= 0.001) { wallOffset = travel.to; travel = null; }
+    updateWall();
+    requestAnimationFrame(wallLoop);
+    return;
+  }
+  // 聚焦态滑动换张落定 → 新中心照片放大转正（先同尺寸滑动，再放大）
+  if (cbPending && focusT > 0.999 && Math.abs(wallOffset - wallTarget) < 0.05) {
+    cbPending = false;
+    cbTarget = 1;
+    upgradeCenterRes();   // 新中心照片放大前换高清档（2026-09-04 用户反馈放大后模糊）
+  }
+  const diff = wallTarget - wallOffset;
+  if (Math.abs(diff) > 0.001) {
+    // 指数平滑跟手：目标越远步进越大（远距快、近距自然减速），
+    // 连续滚轮只改 wallTarget、不打断插值，全程顺滑无顿挫
+    wallOffset += diff * WALL_FOLLOW;
+    updateWall();
+    requestAnimationFrame(wallLoop);
+    return;
+  }
+  // 已逼近 target → 滚轮空闲后吸附到最近整数槽位（让某张图对齐页面正中心）
+  const snapped = Math.round(wallTarget);
+  if (snapped !== wallTarget && performance.now() - lastStepTs > SNAP_IDLE_MS) {
+    wallTarget = snapped;
+    wallVelocity = 0;                   // 吸附是慢速收尾，不触发翘起
+    requestAnimationFrame(wallLoop);
+    return;
+  }
+  // 完全静止
+  wallOffset = wallTarget;
+  updateWall();
+  wallAnimating = false;
+  // 聚焦/放大动画未完成则继续跑（不能让 rAF 因墙静止而停摆）
+  if (Math.abs(focusT - focusTarget) > 0.001 || Math.abs(cbT - cbTarget) > 0.001) {
+    wallAnimating = true;
+    requestAnimationFrame(wallLoop);
+    return;
+  }
+}
+function stepWall(dir) {
+  if (!allLandscape.length) return;
+  const next = Math.min(allLandscape.length - 1, Math.max(0, wallTarget + dir));
+  if (next === wallTarget) return;
+  wallTarget = next;
+  lastStepTs = performance.now();
+  beginWallAnim();
+}
+
+function hoverOn(idx) { hoverIdx = idx; updateWall(); }
+function hoverOff() { hoverIdx = -1; updateWall(); }
+
+// ===== 预览 =====
+// 渐进式加载：先用已缓存的低清档瞬时占位（本地磁盘 ~2ms），高清在后台加载完再替换，
+// 避免点开后长时间空白 / 黑屏。同时预取左右相邻项，左右切换即秒开。
+// · 照片：占位 = 1600px 缩略图，高清 = /preview（可能直通 NAS 原图，几十 MB）
+// · 视频：占位 = ffmpeg 抽帧封面（131KB），播放前不黑屏；视频本身走 /orig 流式，不预取
+const _prefetchCache = new Set();   // 持有引用，防预取图被 GC 中断
+function prefetchAround(idx) {
+  if (!allLandscape.length) return;
+  for (const d of [1, -1, 2, -2]) {
+    const n = (idx + d + allLandscape.length) % allLandscape.length;
+    const a = allLandscape[n];
+    if (!a) continue;
+    // 墙上 480px 已加载；直接预取高清原片（视频不预取，动辄 GB 级）
+    if (a.type !== 'video') {
+      const hi = new Image(); hi.src = `/preview?asset=${a.id}`;
+      _prefetchCache.add(hi);
+    }
+    if (_prefetchCache.size > 40) _prefetchCache.clear();          // 防止无界增长
+  }
+}
+// ===== 查看器：统一走 /viewer.js（与总库同一实现，改一处两边同步）=====
+// 2026-09-06：首页大图界面与影像总库对齐——同样提供「移出墙面 / 裁切·二次构图 / 删除」三个动作。
+// ===== 裁切/二次构图：实现已收编进 /viewer.js（2026-09-06，与总库共用一份）=====
+// 页面侧只留：裁切变更回调（同步墙数据）+ 启动时拉映射
+WBViewer.setCropChangeHandler((id, rect) => {
+  const a = allLandscape.find(x => x.id === id); if (a) a.crop = rect || undefined;
+});
+async function loadCropMap() { try { await WBViewer.loadCropMap(); } catch (e) {} }
+function openViewer(i) {
+  if (!allLandscape.length) return;
+  allLandscape.forEach(a => { a.crop = WBViewer.cropAt(a.id) || undefined; });   // 同总库 syncAssetCrops：查看器按裁切框展示
+  WBViewer.open(allLandscape, i, {
+    meta: (a, idx, n) => `${idx + 1} / ${n} · ${(a.time || '时间待确认').slice(0, 10)}`,
+    filterBtn: () => ({ text: '移出墙面', onClick: () => wallFilterCurrent() }),
+    cropBtn: a => a.type === 'video' ? null : ({ text: a.crop ? '调整裁切' : '裁切', onClick: () => WBViewer.openCropEditor(a.id, a.type) }),
+    actionBtn: () => ({ text: '移入已过滤', danger: true, onClick: () => wallDeleteCurrent() }),
+    afterRender: (a, idx) => prefetchAround(idx)   // 预取相邻原片，翻页不卡
+  });
+}
+async function wallDeleteCurrent() {
+  // 2026-09-13 与总库统一：红钮 = 移入已过滤（/api/filter/add，可在总库侧栏
+  // 「已过滤内容 · 管理」恢复），不再走 /api/recycle 回收站，两页语义一致
+  const cur = WBViewer.current(); if (!cur) return;
+  const a = cur.item;
+  if (!confirm('移入已过滤内容？\n原片不动，可随时在影像总库侧栏「已过滤内容 · 管理」恢复到墙面。')) return;
+  try {
+    await fetch('/api/filter/add', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ items:[{ asset_id:a.id, reason:'MANUAL' }] }) });
+    const i = allLandscape.findIndex(x => x.id === a.id); if (i >= 0) allLandscape.splice(i, 1);
+    WBViewer.toast('已移入已过滤内容 · 可在影像总库侧栏「已过滤内容 · 管理」恢复');
+    allLandscape.length ? WBViewer.render() : WBViewer.close();
+  } catch (e) { WBViewer.toast('操作失败：' + e.message); }
+}
+async function wallFilterCurrent() {
+  const cur = WBViewer.current(); if (!cur) return;
+  const a = cur.item;
+  const btn = document.querySelector('#vFilter');
+  if (btn) { btn.disabled = true; btn.textContent = '提交中…'; }
+  try {
+    const r = await fetch('/api/filter/add', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ asset_id: a.id, reason: 'MANUAL' }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.error) { if (btn) { btn.disabled = false; btn.textContent = '移出墙面'; }
+      alert('移出失败：' + (d.error || ('HTTP ' + r.status))); return; }
+    if (btn) btn.textContent = '已移出 ✓ 刷新后从墙面消失';
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '移出墙面'; }
+  }
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && help.classList.contains('open')) { toggleHelp(false); return; }
+  if (WBViewer.isOpen()) return;   // 查看器开着：ESC/左右键由 viewer.js 统一处理
+  if (e.key === 'Escape' && focusTarget === 1) { exitFocus(); return; }
+  if (e.key === '/' && document.activeElement !== input) {
+    e.preventDefault();
+    if (qbInput.hidden) showTextInput();   // 输入框未展开时先展开文字输入
+    input.focus();
+    return;
+  }
+  // 聚焦态下方向键退出（不切换照片）
+  if (focusTarget === 1 && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { exitFocus(); return; }
+  if (e.key === 'ArrowLeft') stepWall(-1);
+  if (e.key === 'ArrowRight') stepWall(1);
+});
+
+// ===== 触屏：滑动滚动照片墙，轻点走点击 =====
+let tX = 0, tY = 0, tMoved = false;
+window.addEventListener('touchstart', e => {
+  const t = e.touches[0];
+  tX = t.clientX; tY = t.clientY; tMoved = false;
+}, { passive: true });
+window.addEventListener('touchmove', e => {
+  const t = e.touches[0];
+  if (Math.hypot(t.clientX - tX, t.clientY - tY) > 18) tMoved = true;
+}, { passive: true });
+window.addEventListener('touchend', e => {
+  if (WBViewer.isOpen() || help.classList.contains('open')) return;
+  if (!tMoved) return;                      // 轻点交给照片自身的 click
+  // 聚焦态下滑动直接退出
+  if (focusTarget === 1) { exitFocus(); return; }
+  const t = e.changedTouches[0];
+  const dx = t.clientX - tX, dy = t.clientY - tY;
+  const dist = Math.max(Math.abs(dx), Math.abs(dy));
+  const steps = Math.max(1, Math.round(dist / 90));
+  const dir = Math.abs(dy) >= Math.abs(dx) ? (dy > 0 ? -1 : 1) : (dx > 0 ? -1 : 1);
+  stepWall(dir * steps);
+}, { passive: true });
+
+// ===== 背景空白点击退出聚焦（仅当点击的不是 .photo 元素） =====
+document.addEventListener('click', (e) => {
+  if (focusTarget !== 1) return;
+  if (e.target.closest('.photo')) return;
+  if (e.target.closest('.help')) return;
+  if (e.target.closest('.viewer')) return;
+  if (e.target.closest('.qb')) return;
+  if (e.target.closest('button')) return;     // 工具栏按钮不触发
+  exitFocus();
+}, true);
+
+// ===== 帮助浮层 =====
+const help = document.getElementById('help');
+function toggleHelp(open) {
+  help.classList.toggle('open', open);
+  help.setAttribute('aria-hidden', String(!open));
+}
+const EXAMPLES = [
+  '爸爸和女儿同框',
+  '一家人在山上',
+  '我们第一次带孩子去赛里木湖的时候，他几岁？',
+  '孩子 5 岁前的照片',
+  '多设备同拍的时刻',
+  '找同一次旅行里两部手机拍的照片和视频'
+];
+const helpEx = document.getElementById('helpEx');
+EXAMPLES.forEach(q => {
+  const b = document.createElement('button');
+  b.textContent = q;
+  b.onclick = () => { toggleHelp(false); ask(q); };
+  helpEx.appendChild(b);
+});
+
+// ===== 鼠标视差（轻微，参考 GIF：滚动时不晃，鼠标移动时轻微跟手） =====
+const scene = document.querySelector('.scene');
+let pTx = 0, pTy = 0, pCx = 0, pCy = 0;
+window.addEventListener('mousemove', e => {
+  pTx = ((e.clientX / innerWidth) - .5) * 2.5;     // ±2.5° 轻微，不像摇晃
+  pTy = ((e.clientY / innerHeight) - .5) * -2.5;
+});
+(function parallaxLoop() {
+  pCx += (pTx - pCx) * .055;
+  pCy += (pTy - pCy) * .055;
+  // 聚焦态下禁用鼠标视差，让中心大图保持平面正对
+  const focusFactor = Math.max(0, 1 - focusT);
+  scene.style.transform = `rotateX(${(pCy * focusFactor).toFixed(3)}deg) rotateY(${(pCx * focusFactor).toFixed(3)}deg)`;
+  requestAnimationFrame(parallaxLoop);
+})();
+
+// ===== 滚轮驱动：整条对角线画廊滚动 =====
+let wheelAcc = 0, wheelLastTs = 0;
+function onWheel(e) {
+  if (WBViewer.isOpen()) return;
+  // 聚焦态：滚轮直接退出，不滚动墙
+  if (focusTarget === 1) { exitFocus(); return; }
+  let dy = e.deltaY;
+  if (e.deltaMode === 1) dy *= 16;
+  else if (e.deltaMode === 2) dy *= window.innerHeight;
+  const now = Date.now();
+  if (now - wheelLastTs > 250) wheelAcc = 0;
+  wheelLastTs = now;
+  wheelAcc += dy;
+  // 累积到约 1 个槽位距离就触发一次连续滚动（而非离散切换）
+  if (Math.abs(wheelAcc) < 28) return;
+  const steps = Math.trunc(wheelAcc / 28);
+  stepWall(steps * 0.85);        // 0.85 让一次滚轮滑动略小于一格，更连贯
+  wheelAcc -= steps * 28;
+}
+window.addEventListener('wheel', onWheel, { passive: true, capture: true });
+
+window.addEventListener('resize', updateWall);
+
+// ===== 对话 =====
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+// 2026-09-06 终端模式：新消息一出来视图自动跳到最新一条（scrollTop 拉到最底），
+// 旧消息往上顶、被 mask 渐隐吃掉。不用手动滑——滚轮留给照片墙。
+// 注意滚的是 thread 自己，绝不能 window.scrollTo（会把照片墙滚走，老布局遗留 bug）。
+function stickThread() { thread.scrollTop = thread.scrollHeight; }
+function addMsg(html) { const div = document.createElement('div'); div.className = 'msg'; div.innerHTML = html; thread.appendChild(div); stickThread(); return div; }
+
+async function ask(question) {
+  addMsg('<div class="q">' + esc(question) + '</div>');
+  const typing = addMsg('<div class="ans"><span class="typing">· · ·</span></div>');
+  sendBtn.disabled = true;
+  try {
+    const resp = await fetch('/api/ask', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question }),
+    });
+    const data = await resp.json();
+    // 2026-09-04 用户偏好：首页问答只展示照片墙，不显示 LLM 答案文本、memory 备注、计数 meta。
+    // 2026-09-06：找不到时优先用后端返回的 hint（区分"地点/人物/事件/物品"四类空白原因），
+    // 兜底才用「没找到」三字。光「没找到」答不出"为什么没有"，用户重复问也答不出来。
+    const assets = (data.assets || []).filter(a => !a.hidden);
+    if (assets.length) {
+      renderRibbon(assets);
+      typing.innerHTML = '';
+      stickThread();
+    } else {
+      renderRibbon([]);
+      const hintText = (data.hint && String(data.hint).trim()) || '没找到';
+      typing.innerHTML = '<div class="ans hint">' + esc(hintText) + '</div>';
+      stickThread();   // hint 可能三行，填进后内容高度变了要再跳一次
+    }
+  } catch (e) { typing.innerHTML = '<div class="ans hint">出错了：' + esc(String(e)) + '</div>'; stickThread(); }
+  sendBtn.disabled = false;
+  input.value = '';
+  input.focus();
+}
+
+sendBtn.onclick = () => { const q = input.value.trim(); if (q) { ask(q); collapseQB(); } };
+input.addEventListener('keydown', e => { if (e.key === 'Enter') { const q = input.value.trim(); if (q) { ask(q); collapseQB(); } } });
+
+// ===== 问答入口：圆形语音按钮 → 展开「语音 / 文字」 =====
+const qbox = document.querySelector('.qbox');
+const qbMain = document.getElementById('qbMain');
+const qbOpts = document.getElementById('qbOpts');
+const qbInput = document.getElementById('qbInput');
+const qbVoice = document.getElementById('qbVoice');
+const qbText = document.getElementById('qbText');
+
+function showTextInput() {
+  qbMain.style.display = 'none';
+  qbOpts.hidden = true;
+  qbInput.hidden = false;
+}
+function collapseQB() {
+  stopVoice();
+  qbOpts.hidden = true;
+  qbInput.hidden = true;
+  qbMain.style.display = 'flex';
+  input.blur();
+}
+qbMain.onclick = () => {
+  if (recogActive) { stopVoice(); return; }   // 录音中点击主按钮 = 停止识别
+  qbMain.style.display = 'none';
+  qbOpts.hidden = false;
+};
+qbText.onclick = () => { qbOpts.hidden = true; qbInput.hidden = false; input.focus(); };
+// 点击其它区域收起
+document.addEventListener('click', e => {
+  if (qbox.contains(e.target)) return;
+  if (!qbInput.hidden || !qbOpts.hidden) collapseQB();
+});
+
+// ===== 语音输入（Web Speech API，Chrome / Android Chrome 支持 zh-CN） =====
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recog = null;
+let recogActive = false;
+function setMic(on) {
+  qbMain.classList.toggle('recording', on);
+  qbMain.title = on ? '识别中，点击停止' : '问问我们的家庭回忆';
+}
+function stopVoice() {
+  if (!recogActive) return;
+  recogActive = false;
+  setMic(false);
+  try { recog && recog.stop(); } catch (e) {}
+}
+qbVoice.onclick = () => {
+  if (recogActive) { stopVoice(); return; }
+  if (!SR) {
+    alert('当前浏览器不支持语音输入。请用电脑 Chrome 打开，或选「文字」输入。');
+    return;
+  }
+  try { recog = new SR(); } catch (e) { alert('语音识别不可用：' + e); return; }
+  recog.lang = 'zh-CN';
+  recog.continuous = false;
+  recog.interimResults = false;
+  recog.onresult = ev => {
+    recogActive = false; setMic(false);
+    const t = (ev.results[0][0].transcript || '').trim();
+    if (t) ask(t);
+  };
+  recog.onerror = e => {
+    recogActive = false; setMic(false);
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') alert('没有麦克风权限，请允许后再试。');
+    else if (e.error !== 'aborted' && e.error !== 'no-speech') alert('语音识别失败：' + e.error);
+  };
+  recog.onend = () => { recogActive = false; setMic(false); };
+  recogActive = true;
+  qbOpts.hidden = true;          // 收起选项，回到主按钮显示录音状态
+  qbMain.style.display = 'flex';
+  setMic(true);
+  try { recog.start(); } catch (e) { recogActive = false; setMic(false); alert('语音识别启动失败：' + e); }
+};
+
+// 初始加载全部照片
+// 2026-09-07 16:05：带 ?cat=&value= 落地时（地图堆叠跳转）跳过这次默认加载——
+// 两个 fetch 赛跑，全部影像数据量大后到，会把落地分类的走廊覆盖掉（侧栏高亮还在、
+// 照片墙却是全量照片，看起来就像「跳到了整个大类」）。selectedTag 在上方落地
+// IIFE 里同步置好，此处直接判空即可。
+loadCropMap();   // 裁切框映射：大图查看器/裁切编辑器用（2026-09-06 与总库对齐）
+if (!selectedTag) {
+  fetch('/api/category', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cat: 'latest', value: '', slim: 1 }) })
+    .then(r => r.json()).then(d => {
+      const assets = d.assets || [];
+      if (TAGS[0]) TAGS[0].label = `全部影像`;
+      if (taglist.querySelector('.tag')) taglist.querySelector('.tag').textContent = TAGS[0]?.label || `全部影像`;
+      renderRibbon(assets);
+    });
+}
+
+/* ===== 品牌标题自定义：双击编辑，存服务端全设备同步 ===== */
+(function () {
+  const el = document.getElementById('brandText');
+  if (!el) return;
+  // 载入已保存的标题（未设置过则用 HTML 初始值 Mundane）
+  fetch('/api/brand').then(r => r.json()).then(d => {
+    if (d && d.text) el.textContent = d.text;
+  }).catch(() => {});
+  window.editBrand = function (e) {
+    e.stopPropagation();
+    if (el.isContentEditable) return;
+    el.contentEditable = 'true';
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  };
+  async function saveBrand() {
+    el.contentEditable = 'false';
+    const text = el.textContent.trim();
+    if (!text) { location.reload(); return; }
+    try {
+      const r = await fetch('/api/brand', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || '保存失败'); location.reload(); return; }
+      el.textContent = text;   // 用服务端确认的文本
+    } catch (_) { alert('保存失败'); location.reload(); }
+  }
+  el.addEventListener('blur', saveBrand);
+  el.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); el.blur(); }
+    if (ev.key === 'Escape') { el.textContent = el.dataset.orig || el.textContent; el.blur(); }
+  });
+  el.addEventListener('focus', () => { el.dataset.orig = el.textContent; });
+})();
+</script>
+<script src="offline-guard.js"></script>
+</body>
+</html>

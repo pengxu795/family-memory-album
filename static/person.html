@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>人物详情</title>
+<style>
+:root{--bg:#ebebe9;--card:#fff;--ink:#131314;--muted:#9a9a96;--line:#ebebe9;--accent:#2f31f5;--accent-soft:#e5484d14;--danger:#e5484d}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:"Helvetica Neue",-apple-system,"PingFang SC",sans-serif}
+button,input,select{font:inherit}
+.top{min-height:64px;padding:0 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;position:sticky;top:0;background:#ecececf2;backdrop-filter:blur(16px);z-index:5}
+.top h1{font-size:18px;margin:0;font-weight:600}.top .sub{margin:2px 0 0;color:var(--muted);font-size:12px}
+.back,.primary,.quiet{border:1px solid var(--line);background:#ffffff;border-radius:20px;padding:8px 14px;cursor:pointer;font-size:13px}
+.primary{background:var(--ink);color:#fff;border-color:var(--ink)}.quiet{background:var(--bg)}
+.wrap{max-width:1080px;margin:auto;padding:22px 24px 60px}
+section{margin-top:24px}
+.sec-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px}
+.sec-head h2{font-size:15px;margin:0;font-weight:600}.sec-head p{margin:0;font-size:12px;color:var(--muted)}
+/* header card */
+.hero{display:flex;gap:16px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px}
+.hero-av{width:96px;height:96px;border-radius:14px;overflow:hidden;background:var(--bg);position:relative;flex-shrink:0}
+.hero-av img{position:absolute;display:block}
+.hero-info{flex:1}
+.hero-info b{font-size:22px;font-weight:600}.hero-info .rel{display:inline-block;font-size:12px;color:var(--accent);background:var(--accent-soft);padding:2px 10px;border-radius:10px;margin-left:8px}
+.hero-info .cnt{display:block;font-size:13px;color:var(--muted);margin-top:6px}
+.hero .acts{display:flex;gap:8px;flex-shrink:0}
+/* grids */
+.crops{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
+.crop{position:relative;aspect-ratio:1;background:#ebebe9;border-radius:10px;overflow:hidden;cursor:pointer;border:2px solid transparent;padding:0}
+.crop.sel{border-color:var(--accent)}
+.crop img{position:absolute;display:block;max-width:none;object-fit:contain}
+.crop .dt{position:absolute;left:4px;bottom:4px;background:#0009;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;pointer-events:none}
+.crop .sim{position:absolute;right:4px;top:4px;background:var(--accent);color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;pointer-events:none}
+.crop .rm{position:absolute;right:4px;top:4px;background:#000c;color:#fff;border:0;border-radius:8px;padding:2px 8px;font-size:11px;cursor:pointer;opacity:.55;transition:opacity .15s}
+.crop:hover .rm{opacity:1}
+.crop.selmode{cursor:pointer}
+.crop .selbox{position:absolute;left:6px;top:6px;width:18px;height:18px;border:1.5px solid #fff;background:#0006;border-radius:4px;display:none;align-items:center;justify-content:center;color:#fff;font-size:12px;z-index:2}
+.crop.selmode .selbox{display:flex}
+.crop.selmode.on .selbox{background:var(--accent);border-color:var(--accent)}
+.crop.selmode.on .selbox::after{content:"✓"}
+/* actions */
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.bar select{border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:#ffffff;font-size:13px}
+.empty{padding:28px;background:var(--card);border:1.5px dashed var(--line);border-radius:14px;color:var(--muted);text-align:center;font-size:13px}
+/* toast */
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:26px;background:#131314;color:#fff;border-radius:14px;padding:11px 18px;font-size:13px;opacity:0;transition:opacity .25s;z-index:30;max-width:90vw;pointer-events:none}
+/* 头像选择弹窗 */
+.mask{position:fixed;inset:0;background:#0006;display:none;align-items:center;justify-content:center;z-index:25;padding:20px}
+.mask.show{display:flex}
+.modal{background:#ffffff;border-radius:16px;width:min(560px,100%);max-height:84vh;height:min(84vh,820px);overflow:hidden;padding:18px;display:flex;flex-direction:column}
+.modal h3{margin:0 0 12px;font-size:15px;font-weight:500;flex-shrink:0}
+.avgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));grid-auto-rows:120px;gap:8px;flex:1;min-height:0;overflow-y:auto;align-content:start;padding-right:4px}
+.avgrid .pick{position:relative;width:100%;aspect-ratio:1/1;border:1.5px solid var(--line);border-radius:10px;overflow:hidden;cursor:pointer;padding:0;background:#f0f0ee}
+.avgrid .pick:hover{border-color:var(--accent)}
+.avgrid .pick img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.modal-actions{display:flex;gap:8px;margin-top:14px;justify-content:flex-end;flex-shrink:0}
+.bar-btn{border:1px solid var(--line);background:#ffffff;border-radius:18px;padding:6px 14px;cursor:pointer;font-size:12px;color:var(--ink)}
+.bar-btn.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.sel-bar{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1d1d1b;color:#fff;border-radius:14px;padding:12px 18px;display:none;align-items:center;gap:12px;z-index:40;box-shadow:0 6px 24px #0003}
+.sel-bar.show{display:flex}
+.sel-bar .pill{background:#00000040;color:#fff;border-radius:8px;padding:3px 10px;font-size:12px}
+.sel-bar button{border:0;border-radius:10px;padding:6px 12px;cursor:pointer;font-size:12px}
+.sel-bar .ok{background:var(--accent);color:#fff}
+.sel-bar .ok:disabled{background:#6b6b6b;color:#b3b3b0;cursor:not-allowed}
+.sel-bar .cancel{background:#ffffff24;color:#fff}
+@media(max-width:640px){.hero{flex-wrap:wrap}.hero-av{width:72px;height:72px}.hero-info b{font-size:18px}.wrap{padding:16px}}
+</style><link rel="stylesheet" href="/theme.css?v=06"><link rel="stylesheet" href="/ui.css?v=2">
+</head>
+<body>
+<header class="top"><button class="back" onclick="location.href='/people.html'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;vertical-align:-2px"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> 人物管理</button>
+  <div><h1 id="pname">人物详情</h1><p class="sub">自动推荐 + 手动添加</p></div>
+</header>
+<main class="wrap">
+  <div id="hero" class="hero" style="display:none"></div>
+
+  <section>
+    <div class="sec-head"><h2>可能也是 TA 的脸</h2><p>点选相似人脸，确认后添加到该人物</p></div>
+    <div id="sug"></div>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>已确认的影像</h2><p id="confirmedCnt">当前归属该人物的人脸样例</p>
+      <button id="selectModeBtn" class="bar-btn" onclick="toggleSelectMode()">选择</button>
+    </div>
+    <div id="confirmed"></div>
+  </section>
+</main>
+<div id="selBar" class="sel-bar">
+  <span class="pill">已选 <b id="selCount">0</b> 张</span>
+  <button class="ok" id="selOk" onclick="batchUnassign()" disabled>撤销选中认领</button>
+  <button class="cancel" onclick="exitSelectMode()">取消</button>
+</div>
+<div id="avMask" class="mask">
+  <div class="modal">
+    <h3>选择头像 · 从该人物的高质量人脸里挑一张<span style="font-size:11px;color:var(--muted);font-weight:400">（按 ESC 关闭）</span></h3>
+    <div class="avgrid" id="avGrid"></div>
+    <div class="modal-actions">
+      <button class="quiet" id="avClear" onclick="clearAvatar()">恢复自动样例</button>
+      <span style="flex:1"></span>
+      <button class="quiet" onclick="closeAvatarPicker()">取消</button>
+    </div>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
+<script>
+const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pid=new URLSearchParams(location.search).get('person_id');
+let person={}, selected=new Set();
+let toastTimer;function toast(msg){const t=$('toast');t.textContent=msg;t.style.opacity=1;clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.style.opacity=0,4000)}
+// 2026-09-17：图片读不出来时不再删掉容器（旧行为会让人脸整块消失）。先重试一次，再占位。
+function imgFail(el){
+  const src=el.getAttribute('src')||'';
+  if(src&&!el.dataset.retried){
+    el.dataset.retried='1';
+    setTimeout(()=>{el.src=src+(src.includes('?')?'&':'?')+'_r='+Date.now()},800);
+    return;
+  }
+  el.onerror=null;
+  const box=el.closest('.hero-av,.crop,.fc,.pick,.av')||el.parentElement;
+  if(!box)return;
+  box.classList.add('imgerr');
+  el.style.display='none';
+  if(!box.querySelector('.imgerr-tag'))box.insertAdjacentHTML('beforeend','<span class="imgerr-tag">读图失败</span>');
+}
+function cropStyle(b){
+  const W=+b.image_width||1000,H=+b.image_height||750,r=W/H;
+  let w=Math.max(+b.w||0.01,0.001),h=Math.max(+b.h||0.01,0.001);
+  let x=+b.x||0,y=+b.y||0;
+  // bbox 中心扩展 2 倍（带头发/肩膀），裁剪到图像内
+  const cx=x+w/2,cy=y+h/2;
+  w=Math.min(w*2,1);h=Math.min(h*2,1);
+  x=Math.max(0,cx-w/2);y=Math.max(0,cy-h/2);
+  w=Math.min(w,1-x);h=Math.min(h,1-y);
+  const wp=100*Math.max(1/w,r/h);
+  const hp=100*Math.max(1/(w*r),1/h);
+  return `width:${wp.toFixed(2)}%;height:${hp.toFixed(2)}%;left:${(-x*wp).toFixed(2)}%;top:${(-y*hp).toFixed(2)}%;`;
+}
+function cropHTML(s,extra=''){
+  const dt=(s.capture_time||'').slice(0,10);
+  const sim=s.sim?`<span class="sim">${Math.round(s.sim*100)}%</span>`:'';
+  return `<button class="crop" data-fid="${esc(s.face_instance_id)}" onclick="toggle(this)" title="${dt||''} 点击选中" ${extra}>
+    <img loading="lazy" decoding="async" src="/thumb?asset=${encodeURIComponent(s.asset_id)}&edge=480" onerror="imgFail(this)" style="${cropStyle(s.bbox)}">${sim}${dt?`<span class="dt">${esc(dt)}</span>`:''}
+  </button>`;
+}
+function toggle(el){const fid=el.dataset.fid;el.classList.toggle('sel');selected.has(fid)?selected.delete(fid):selected.add(fid);updateHint()}
+function updateHint(){const n=selected.size;document.querySelectorAll('.nsel').forEach(x=>x.textContent=n);const btns=document.querySelectorAll('.assignBtn');btns.forEach(b=>b.disabled=n===0)}
+async function load(){
+  try{
+    const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'detail',person_id:pid,confirmed_limit:5000})});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'读取失败');
+    person=d.person||{};
+    person.confirmed_faces=d.confirmed_faces||[];
+    $('pname').textContent=person.display_name||'未命名';
+    renderHero(d);
+    $('sug').innerHTML=renderSuggestions(d.suggestions||[]);
+    $('confirmed').innerHTML=renderConfirmed(d.confirmed_faces||[]);
+    $('confirmedCnt').textContent=`共 ${(d.confirmed_faces||[]).length.toLocaleString()} 张已确认 · 点「撤销」可让该脸回到待认领池（照片不受影响）`;
+    if(selMode){
+      confSel.clear();
+      document.querySelectorAll('#confirmed .crop').forEach(c=>{
+        c.classList.add('selmode');
+        c.querySelector('.rm').style.display='none';
+      });
+      $('selectModeBtn').classList.add('on');
+      $('selBar').classList.add('show');
+      updateSelCount();
+    }
+  }catch(e){toast(e.message)}
+}
+function renderHero(d){
+  const p=d.person;
+  const cf=d.confirmed_faces||[];
+  const fid=p.avatar_face_id||(cf[0]&&cf[0].face_instance_id);
+  const avi=fid?`<div class="hero-av"><img decoding="async" src="/face_crop?face=${encodeURIComponent(fid)}&k=2.4&size=480&v=5" onerror="imgFail(this)" style="width:100%;height:100%;object-fit:contain"></div>`
+    :`<div class="hero-av" style="background:#e3e3e0"></div>`;
+  $('hero').style.display='';
+  $('hero').innerHTML=`${avi}
+    <div class="hero-info"><b>${esc(p.display_name||'未命名')}</b>${p.relationship_label?`<span class="rel">${esc(p.relationship_label)}</span>`:''}
+    <span class="cnt">${Number(p.asset_count||0).toLocaleString()} 项影像 · ${Number(p.face_count||0).toLocaleString()} 张人脸</span></div>
+    <div class="acts"><button class="quiet" onclick="location.href='/people.html'">← 返回</button><button class="quiet" onclick="openAvatarPicker()">换头像</button></div>`;
+}
+function openAvatarPicker(){
+  const cf=(person.confirmed_faces||[]);
+  if(!cf.length){toast('该人物还没有已确认的人脸，无法选头像');return}
+  const grid=cf.map(f=>`<button class="pick" data-fid="${esc(f.face_instance_id)}" onclick="pickAvatar('${esc(f.face_instance_id)}')"><img loading="lazy" decoding="async" src="/face_crop?face=${encodeURIComponent(f.face_instance_id)}&k=2.4&size=240&v=5" onerror="imgFail(this)"></button>`).join('');
+  const m=$('avMask');
+  m.querySelector('#avGrid').innerHTML=grid;
+  m.querySelector('#avClear').style.display=person.avatar_face_id?'':'none';
+  m.classList.add('show');
+}
+function closeAvatarPicker(){$('avMask').classList.remove('show')}
+/* ESC 关闭换头像弹窗（几百张头像时不用滚到底部点取消） */
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Escape')return;
+  if($('avMask').classList.contains('show')){e.preventDefault();closeAvatarPicker()}
+});
+async function pickAvatar(fid){
+  try{
+    const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_avatar',person_id:pid,face_instance_id:fid})});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'设置失败');
+    closeAvatarPicker();toast('头像已更新');await load();
+  }catch(e){toast(e.message)}
+}
+async function clearAvatar(){
+  try{
+    const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_avatar',person_id:pid,face_instance_id:''})});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'清除失败');
+    closeAvatarPicker();toast('已恢复自动样例头像');await load();
+  }catch(e){toast(e.message)}
+}
+function renderSuggestions(list){
+  if(!list.length)return '<div class="empty">暂无相似未标注人脸推荐（可能该人物的参照脸还太少，或没有高质量未归属脸）<br><br><button class="primary" onclick="location.href=\'/faces.html?person='+esc(pid)+'\'">去人脸池手动挑选 →</button></div>';
+  return `<div class="crops">${list.map(cropHTML).join('')}</div>
+    <div class="bar"><span class="quiet">已选 <b class="nsel">0</b> 张</span><button class="primary assignBtn" onclick="assignSel()" disabled>确认添加</button><button class="quiet" onclick="location.href='/faces.html?person=${esc(pid)}'">更多未标注人脸 →</button></div>`;
+}
+function renderConfirmed(list){
+  if(!list.length)return '<div class="empty">暂无已确认人脸 · 选错了可在每张右上「撤销」回退</div>';
+  return `<div class="crops">${list.map(confirmedCropHTML).join('')}</div>`;
+}
+function confirmedCropHTML(s){
+  const dt=(s.capture_time||'').slice(0,10);
+  return `<div class="crop" data-fid="${esc(s.face_instance_id)}" title="${dt||''}" onclick="onConfirmedClick(event,this)">
+    <img loading="lazy" decoding="async" src="/face_crop?face=${encodeURIComponent(s.face_instance_id)}&k=2.4&size=480&v=5" onerror="imgFail(this)" style="width:100%;height:100%;object-fit:contain">
+    ${dt?`<span class="dt">${esc(dt)}</span>`:''}
+    <span class="selbox"></span>
+    <button class="rm" onclick="event.stopPropagation();unassignFace('${esc(s.face_instance_id)}')" title="撤销认领：这张脸回到待认领池">撤销</button>
+  </div>`;
+}
+async function unassignFace(fid){
+  if(!confirm('撤销这张脸的认领？\n它将回到待认领池，照片本身不受影响。'))return;
+  try{
+    const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'unassign_faces',face_instance_ids:[fid]})});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'撤销失败');
+    toast('已撤销，该脸回到待认领池');await load();
+  }catch(e){toast(e.message)}
+}
+async function assignSel(){
+  const ids=[...selected];
+  if(!ids.length)return;
+  try{
+    const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'assign_faces',person_id:pid,face_instance_ids:ids})});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'保存失败');
+    toast(`已添加 ${ids.length} 张脸，自动归类后台启动`);
+    selected.clear();await load();
+  }catch(e){toast(e.message)}
+}
+// ===== 已确认影像多选撤销 =====
+let selMode=false,confSel=new Set();
+function toggleSelectMode(){
+  selMode=!selMode;
+  confSel.clear();
+  $('selectModeBtn').classList.toggle('on',selMode);
+  $('selBar').classList.toggle('show',selMode);
+  updateSelCount();
+  document.querySelectorAll('#confirmed .crop').forEach(c=>{
+    c.classList.toggle('selmode',selMode);
+    c.classList.remove('on');
+    if(!selMode)c.querySelector('.rm')?.style.setProperty('display','');
+  });
+  if(selMode)document.querySelectorAll('#confirmed .crop .rm').forEach(b=>b.style.display='none');
+}
+function exitSelectMode(){if(selMode)toggleSelectMode()}
+function onConfirmedClick(e,el){
+  if(!selMode)return;
+  if(e.target.closest('.selbox')||e.target.closest('.rm'))return;
+  e.stopPropagation();
+  const fid=el.dataset.fid;
+  el.classList.toggle('on');
+  el.classList.contains('on')?confSel.add(fid):confSel.delete(fid);
+  updateSelCount();
+}
+function updateSelCount(){
+  const n=confSel.size;
+  $('selCount').textContent=n;
+  $('selOk').disabled=n===0;
+}
+async function batchUnassign(){
+  const ids=[...confSel];
+  if(!ids.length)return;
+  if(!confirm(`确定撤销这 ${ids.length} 张人脸的认领？\n它们会回到待认领池，照片本身不受影响。`))return;
+  try{
+    const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'unassign_faces',face_instance_ids:ids})});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'撤销失败');
+    toast(`已撤销 ${ids.length} 张`);
+    confSel.clear();
+    await load();
+    if(selMode){$('selBar').classList.add('show');updateSelCount();}
+  }catch(e){toast(e.message)}
+}
+if(!pid){toast('缺少人物 ID');}else{load()}
+</script></body></html>

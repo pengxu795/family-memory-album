@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>登录 · 家庭回忆相册</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body { display: grid; place-items: center; background: #f5f6f8; color: #131314;
+         font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .card { width: min(360px, 92vw); background:#ffffff; border-radius: 14px;
+          padding: 32px 28px; box-shadow: 0 8px 30px rgba(0,0,0,.08); }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  p.sub { font-size: 13px; color: #797979; margin-bottom: 22px; }
+  label { display: block; font-size: 13px; color: #6b6b6b; margin: 12px 0 4px; }
+  input[type=text], input[type=password] {
+    width: 100%; padding: 10px 12px; border: 1px solid #ebebe9; border-radius: 8px;
+    font-size: 15px; outline: none; }
+  input:focus { border-color: #2f31f5; }
+  .row { display: flex; align-items: center; gap: 6px; margin-top: 14px; font-size: 13px; color: #6b6b6b; }
+  button { width: 100%; margin-top: 18px; padding: 11px; border: 0; border-radius: 8px;
+           background: #2f31f5; color: #fff; font-size: 15px; cursor: pointer; }
+  button:disabled { opacity: .6; }
+  .err { color: #e5484d; font-size: 13px; margin-top: 10px; min-height: 18px; }
+  .tv-tip { margin-top: 16px; font-size: 12px; color: #a3a3a0; line-height: 1.6; }
+</style>
+<link rel="stylesheet" href="/theme.css?v=06">
+<link rel="stylesheet" href="/ui.css?v=2">
+</head>
+<body>
+<div class="card">
+  <h1>家庭回忆相册</h1>
+  <p class="sub">请登录后浏览（管理员 / 家人 / 访客）</p>
+  <form id="f">
+    <label>用户名</label>
+    <input type="text" id="u" autocomplete="username" autofocus>
+    <label>密码</label>
+    <input type="password" id="p" autocomplete="current-password">
+    <div class="row">
+      <input type="checkbox" id="r" checked>
+      <label for="r" style="margin:0">记住此设备（电视/常驻设备勾选，365 天免登录）</label>
+    </div>
+    <button id="btn" type="submit">登 录</button>
+    <div class="err" id="e"></div>
+    <div class="tv-tip">电视端提示：若登录后重启又要求登录（浏览器不保存 Cookie），
+      勾选"记住此设备"重新登录一次，并在地址栏地址后加 <b>&amp;token=返回的令牌</b>，或联系管理员。</div>
+    <div class="tv-tip" style="margin-top:8px"><a href="/users.html" style="color:#2f31f5">成员账号管理 / 修改密码 →</a></div>
+  </form>
+</div>
+<script>
+document.getElementById("f").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const btn = document.getElementById("btn"), err = document.getElementById("e");
+  btn.disabled = true; err.textContent = "";
+  try {
+    const resp = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        username: document.getElementById("u").value.trim(),
+        password: document.getElementById("p").value,
+        remember: document.getElementById("r").checked
+      })
+    });
+    const data = await resp.json();
+    if (resp.ok && data.ok) {
+      location.href = "/";
+      return;
+    }
+    err.textContent = data.error || "登录失败";
+  } catch (ex) {
+    err.textContent = "网络错误：" + ex;
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

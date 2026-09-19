@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 460" width="680" height="460" role="img" aria-label="家的记忆 Family Memory">
+  <rect width="680" height="460" fill="#141414"/>
+
+  <!-- 卡 0 · 最远 · 场景 -->
+  <g transform="rotate(-8 530 160)" opacity="0.5">
+    <rect x="420" y="25" width="220" height="270" rx="22"
+          fill="white" fill-opacity="0.06" stroke="white" stroke-opacity="0.65" stroke-width="2"/>
+    <rect x="420" y="25" width="220" height="100" rx="22" fill="white" fill-opacity="0.1"/>
+    <path d="M 438 230 L 482 178 L 510 208 L 546 168 L 600 232"
+          fill="none" stroke="white" stroke-opacity="0.92" stroke-width="3"
+          stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="600" cy="85" r="12" fill="#c65f3c" fill-opacity="0.95"/>
+  </g>
+
+  <!-- 卡 1 · 地点 -->
+  <g transform="rotate(-2 470 175)" opacity="0.62">
+    <rect x="360" y="40" width="220" height="270" rx="22"
+          fill="white" fill-opacity="0.07" stroke="white" stroke-opacity="0.7" stroke-width="2"/>
+    <rect x="360" y="40" width="220" height="100" rx="22" fill="white" fill-opacity="0.11"/>
+    <path d="M 470 105 C 494 105 512 124 512 148 C 512 174 470 213 470 213 C 470 213 428 174 428 148 C 428 124 446 105 470 105 Z"
+          fill="none" stroke="white" stroke-opacity="0.92" stroke-width="3" stroke-linejoin="round"/>
+    <circle cx="470" cy="150" r="11" fill="#c65f3c" fill-opacity="0.95"/>
+  </g>
+
+  <!-- 卡 2 · 人物 -->
+  <g transform="rotate(2 410 190)" opacity="0.78">
+    <rect x="300" y="55" width="220" height="270" rx="22"
+          fill="white" fill-opacity="0.09" stroke="white" stroke-opacity="0.75" stroke-width="2"/>
+    <rect x="300" y="55" width="220" height="100" rx="22" fill="white" fill-opacity="0.13"/>
+    <circle cx="410" cy="160" r="32" fill="white" fill-opacity="0.16" stroke="white" stroke-opacity="0.92" stroke-width="2.4"/>
+    <circle cx="410" cy="240" r="54" fill="white" fill-opacity="0.12" stroke="white" stroke-opacity="0.92" stroke-width="2.4"/>
+    <circle cx="400" cy="156" r="2.6" fill="white"/>
+    <circle cx="420" cy="156" r="2.6" fill="white"/>
+    <path d="M 401 174 Q 410 180 419 174" fill="none" stroke="white" stroke-opacity="0.92" stroke-width="2" stroke-linecap="round"/>
+  </g>
+
+  <!-- 卡 3 · 最近 · 家 -->
+  <g transform="rotate(-5 260 250)">
+    <rect x="150" y="115" width="220" height="270" rx="22" fill="#ececec"/>
+    <rect x="150" y="115" width="220" height="100" rx="22" fill="#ffffff"/>
+    <path d="M 260 170 L 318 222 H 304 V 280 H 216 V 222 H 202 Z" fill="#141414"/>
+    <rect x="246" y="246" width="28" height="34" rx="3" fill="#c65f3c"/>
+    <circle cx="260" cy="158" r="3" fill="#c65f3c"/>
+  </g>
+
+  <!-- 文字 -->
+  <g font-family="PingFang SC, Helvetica Neue, Hiragino Sans GB, Microsoft YaHei, sans-serif" text-anchor="middle">
+    <text x="340" y="412" font-size="34" font-weight="300" letter-spacing="8" fill="#ececec" dominant-baseline="middle">家的记忆</text>
+    <text x="340" y="438" font-size="11" font-weight="400" letter-spacing="5" fill="#9a9a96" dominant-baseline="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">FAMILY MEMORY</text>
+  </g>
+</svg>

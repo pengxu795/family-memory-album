@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>成员账号管理 · 家庭回忆相册</title>
+<script>if(new URLSearchParams(location.search).get('embed')==='1')document.documentElement.className+=' embed';</script>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { min-height: 100vh; background: #f5f6f8; color: #131314;
+         font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+         display: flex; justify-content: center; padding: 32px 16px; }
+  .wrap { width: min(560px, 96vw); }
+  .card { background:#ffffff; border-radius: 14px; padding: 26px 26px;
+          box-shadow: 0 8px 30px rgba(0,0,0,.08); margin-bottom: 18px; }
+  h1 { font-size: 20px; margin-bottom: 2px; }
+  p.sub { font-size: 13px; color: #797979; margin-bottom: 18px; }
+  h2 { font-size: 15px; margin-bottom: 12px; }
+  label { display: block; font-size: 13px; color: #6b6b6b; margin: 10px 0 4px; }
+  input, select {
+    width: 100%; padding: 9px 11px; border: 1px solid #ebebe9; border-radius: 8px;
+    font-size: 14px; outline: none; background: #fff; }
+  input:focus, select:focus { border-color: #2f31f5; }
+  button { padding: 9px 16px; border: 0; border-radius: 8px;
+           background: #2f31f5; color: #fff; font-size: 14px; cursor: pointer; }
+  button.ghost { background: #eceefc; color: #2f31f5; }
+  button.danger { background: #feecec; color: #e5484d; }
+  button:disabled { opacity: .6; }
+  .msg { font-size: 13px; margin-top: 10px; min-height: 18px; }
+  .msg.ok { color: #1a7f37; } .msg.err { color: #e5484d; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #f0f0ee; }
+  th { font-size: 12px; color: #8a8a88; font-weight: 600; }
+  td .ops { display: flex; gap: 6px; }
+  td .ops button { padding: 5px 10px; font-size: 12px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+  .badge.admin { background: #fdecec; color: #c0392b; }
+  .badge.family { background: #e8f5e9; color: #1a7f37; }
+  .badge.guest { background: #eef1f6; color: #5b6470; }
+  .formrow { display: flex; gap: 10px; }
+  .formrow > div { flex: 1; }
+  a.back { font-size: 13px; color: #2f31f5; text-decoration: none; }
+  /* 2026-09-19：被设置弹窗以 ?embed=1 内嵌时隐藏返回链接、收紧留白 */
+  html.embed .back { display: none; }
+  html.embed body { padding: 0 0 10px; }
+  html.embed .card { box-shadow: none; }
+</style>
+<link rel="stylesheet" href="/theme.css?v=06">
+<link rel="stylesheet" href="/ui.css?v=2">
+</head>
+<body>
+<div class="wrap">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+    <h1>成员账号管理</h1>
+    <a class="back" href="/" onclick="if(history.length>1){history.back();return false}">← 返回相册</a>
+  </div>
+
+  <div class="card">
+    <h2>我的账号：<span id="me">…</span></h2>
+    <label>旧密码</label>
+    <input type="password" id="oldPw" autocomplete="current-password">
+    <label>新密码（至少 6 位）</label>
+    <input type="password" id="newPw" autocomplete="new-password">
+    <label>再输一遍新密码</label>
+    <input type="password" id="newPw2" autocomplete="new-password">
+    <div style="margin-top:14px"><button id="btnPw">修改我的密码</button></div>
+    <div class="msg" id="pwMsg"></div>
+  </div>
+
+  <div class="card" id="adminCard" style="display:none">
+    <h2>家庭成员（管理员专用）</h2>
+    <table>
+      <thead><tr><th>用户名</th><th>角色</th><th>创建时间</th><th>操作</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="4">加载中…</td></tr></tbody>
+    </table>
+    <h2 style="margin-top:20px">新增成员</h2>
+    <div class="formrow">
+      <div><label>用户名</label><input type="text" id="nu"></div>
+      <div><label>初始密码（≥6 位）</label><input type="password" id="np"></div>
+      <div><label>角色</label>
+        <select id="nr">
+          <option value="family">family（家人，可看可管理）</option>
+          <option value="guest">guest（访客，只可浏览）</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-top:14px"><button id="btnAdd">创建成员账号</button></div>
+    <p class="sub" style="margin-top:10px">说明：本系统不开放自助注册——家人账号一律由管理员在此创建，
+      避免陌生人自行注册。管理员账号由初始化向导创建，不可在此删除。</p>
+    <div class="msg" id="adminMsg"></div>
+  </div>
+</div>
+
+<script>
+let ME = null;
+let USERS = [];
+
+function setMsg(id, text, ok) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = "msg " + (ok ? "ok" : "err");
+}
+
+async function loadMe() {
+  // 2026-09-14 审计修复：网络/服务异常时跳登录页，不再卡在「…」
+  let r;
+  try {
+    r = await fetch("/api/auth/me");
+  } catch (e) { location.href = "/login.html"; return; }
+  const d = await r.json().catch(() => ({}));
+  ME = d.user;
+  if (!ME) { location.href = "/login.html"; return; }
+  document.getElementById("me").textContent = ME.username + "（" + ME.role + "）";
+  if (ME.role === "admin") {
+    document.getElementById("adminCard").style.display = "";
+    loadUsers();
+  }
+}
+
+async function loadUsers() {
+  const r = await fetch("/api/auth/users").then(x => x.json());
+  USERS = r.users || [];
+  const rows = document.getElementById("rows");
+  rows.innerHTML = USERS.map(u => `
+    <tr>
+      <td>${escHtml(u.username)}</td>
+      <td><span class="badge ${u.role}">${u.role}</span></td>
+      <td style="font-size:12px;color:#8a8a88">${(u.created_at || "").slice(0, 10)}</td>
+      <td><div class="ops">
+        <button class="ghost" onclick="resetPw('${u.user_id}')">重置密码</button>
+        ${u.role !== "admin" ? `<button class="danger" onclick="delUser('${u.user_id}')">删除</button>` : ""}
+      </div></td>
+    </tr>`).join("");
+}
+
+// 2026-09-13 安全收紧：用户名不再拼进 onclick/innerHTML（含引号会破坏属性乃至 XSS），
+// 按钮只传 user_id（服务端生成的 hex），名字由前端从 USERS 表回查。
+function userById(uid) { return USERS.find(u => u.user_id === uid); }
+function escHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+async function resetPw(uid) {
+  const u = userById(uid);
+  const np = prompt("给「" + (u ? u.username : uid) + "」设置新密码（至少 6 位，重置后其所有登录会失效）：");
+  if (np === null) return;
+  const r = await fetch("/api/auth/users", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({action: "passwd", user_id: uid, new_password: np})
+  }).then(x => x.json());
+  setMsg("adminMsg", r.ok ? "已重置密码" : (r.error || "失败"), r.ok);
+}
+
+async function delUser(uid) {
+  const u = userById(uid);
+  if (!confirm("删除成员「" + (u ? u.username : uid) + "」？其登录会话立即失效，相册内容不受影响。")) return;
+  const r = await fetch("/api/auth/users", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({action: "delete", user_id: uid})
+  }).then(x => x.json());
+  setMsg("adminMsg", r.ok ? "已删除" : (r.error || "失败"), r.ok);
+  if (r.ok) loadUsers();
+}
+
+document.getElementById("btnPw").addEventListener("click", async () => {
+  const o = document.getElementById("oldPw").value,
+        n1 = document.getElementById("newPw").value,
+        n2 = document.getElementById("newPw2").value;
+  if (n1 !== n2) { setMsg("pwMsg", "两次输入的新密码不一致", false); return; }
+  const r = await fetch("/api/auth/passwd", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({old_password: o, new_password: n1})
+  }).then(x => x.json());
+  setMsg("pwMsg", r.ok ? "密码已修改（你的其它设备需重新登录）" : (r.error || "失败"), r.ok);
+  if (r.ok) {
+    document.getElementById("oldPw").value = "";
+    document.getElementById("newPw").value = "";
+    document.getElementById("newPw2").value = "";
+  }
+});
+
+document.getElementById("btnAdd").addEventListener("click", async () => {
+  const u = document.getElementById("nu").value.trim(),
+        p = document.getElementById("np").value,
+        role = document.getElementById("nr").value;
+  if (!u || !p) { setMsg("adminMsg", "用户名和密码都要填", false); return; }
+  if (p.length < 6) { setMsg("adminMsg", "初始密码至少 6 位", false); return; }
+  const r = await fetch("/api/auth/users", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({action: "create", username: u, password: p, role: role})
+  }).then(x => x.json());
+  setMsg("adminMsg", r.ok ? "已创建「" + u + "」（" + role + "）" : (r.error || "失败"), r.ok);
+  if (r.ok) {
+    document.getElementById("nu").value = "";
+    document.getElementById("np").value = "";
+    loadUsers();
+  }
+});
+
+loadMe();
+</script>
+</body>
+</html>

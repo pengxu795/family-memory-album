@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>画质与整理 · 新功能演示</title>
+<style>
+:root{--card:#fff;--bg:#f4f3ef;--line:#e4e2dc;--muted:#8a877f;--ink:#131314;--accent:#e5484d;
+--ok:#30a46c;--warn:#b26a00;--bad:#e5484d}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,"PingFang SC",sans-serif}
+header{padding:18px 22px 10px}
+h1{font-size:19px;font-weight:600}
+.sub{color:var(--muted);font-size:12px;margin-top:3px}
+.tabs{display:flex;gap:6px;padding:10px 22px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+.tabs button{border:1px solid var(--line);background:var(--card);padding:8px 16px;border-radius:20px;
+cursor:pointer;font-size:13px;color:var(--ink)}
+.tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+main{padding:18px 22px;max-width:1200px}
+.note{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px;
+font-size:12.5px;color:var(--muted);margin-bottom:16px}
+.note b{color:var(--ink)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;position:relative}
+.card .ph{position:relative;width:100%;aspect-ratio:4/3;background:#e8e6e0;overflow:hidden}
+.card .ph img{width:100%;height:100%;object-fit:cover;display:block}
+.badge{position:absolute;left:8px;top:8px;padding:3px 9px;border-radius:12px;font-size:11px;color:#fff}
+.b-sharp{background:var(--ok)} .b-soft{background:var(--warn)} .b-blurry{background:var(--bad)}
+.score{position:absolute;right:8px;bottom:8px;background:#000a;color:#fff;padding:2px 8px;
+border-radius:10px;font-size:11px}
+.meta{padding:8px 10px;font-size:11.5px;color:var(--muted);display:flex;justify-content:space-between}
+.id{font-family:ui-monospace,Menlo,monospace;opacity:.7}
+.filters{display:flex;gap:8px;margin-bottom:14px}
+.filters button{border:1px solid var(--line);background:var(--card);border-radius:16px;
+padding:5px 13px;font-size:12px;cursor:pointer}
+.filters button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+/* 去重组 */
+.dgroup{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:14px}
+.dgroup .head{display:flex;gap:8px;align-items:center;font-size:12.5px;margin-bottom:10px}
+.dgroup .engine{background:#ece9f5;color:#2f31f5;border-radius:10px;padding:2px 9px;font-size:11px}
+.drow{display:flex;gap:10px;flex-wrap:wrap}
+.ditem{width:150px}
+.ditem .ph{aspect-ratio:1;border-radius:8px;overflow:hidden;position:relative;background:#e8e6e0}
+.ditem .ph img{width:100%;height:100%;object-fit:cover}
+.ditem.keep .ph{outline:3px solid var(--ok);outline-offset:-3px}
+.ditem.dup .ph img{opacity:.55}
+.ditem .tag{position:absolute;left:6px;top:6px;font-size:10.5px;color:#fff;border-radius:9px;padding:2px 8px}
+.ditem.keep .tag{background:var(--ok)} .ditem.dup .tag{background:#9e9e9e}
+.ditem .sz{text-align:center;font-size:10.5px;color:var(--muted);padding-top:4px}
+/* 五张选优 */
+.dayhead{font-size:14px;font-weight:600;margin:6px 0 12px}
+.dayhead span{color:var(--muted);font-weight:400;font-size:12px;margin-left:8px}
+.top5{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+.top5 .card .rank{position:absolute;left:8px;top:8px;width:26px;height:26px;border-radius:50%;
+background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;
+font-size:13px;font-weight:600}
+/* 裁切预览 */
+.cropgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+.cropbox{position:relative;display:inline-block}
+.mwin{position:absolute;border:2.5px solid var(--accent);box-shadow:0 0 0 999px #0006;
+border-radius:3px;pointer-events:none}
+.mwin.v{border-color:#2f31f5}
+.mlabel{position:absolute;z-index:2;left:8px;top:8px}
+.m-label{background:#000b;color:#fff;border-radius:10px;padding:2px 9px;font-size:11px}
+.m-label.v{background:#2f31f5}
+/* junk */
+.jcard .ph img{filter:grayscale(.2)}
+.legend{font-size:12px;color:var(--muted);margin:8px 0 14px}
+.hide{display:none!important}
+</style>
+</head>
+<body>
+<header>
+  <h1>画质与整理 · 新功能①-⑤ 展示方案</h1>
+  <div class="sub">纯静态演示 · 数据内嵌自 data/*.jsonl · 不写库 · 缩略图走 /thumb 接口（需 server:8788）</div>
+</header>
+<div class="tabs" id="tabs">
+  <button data-t="blur" class="on">① 模糊检测</button>
+  <button data-t="dedup">② 相似去重</button>
+  <button data-t="top5">③ 每日五张</button>
+  <button data-t="crop">⑤ 智能裁切</button>
+  <button data-t="junk">④ 截图/收款码</button>
+</div>
+<main id="main"></main>
+<script>
+const DATA = {"blur": [{"sharp_score": 1201.7, "med_score": 753.4, "label": "sharp", "asset_id": "asset_6d7b732dd68b953a120d9dd8"}, {"sharp_score": 4694.2, "med_score": 308.1, "label": "sharp", "asset_id": "asset_6dbffb976d0a5105fd279ef2"}, {"sharp_score": 1751.3, "med_score": 696.7, "label": "sharp", "asset_id": "asset_3719500fd4e02d25502ea6d9"}, {"sharp_score": 3684.7, "med_score": 1405.9, "label": "sharp", "asset_id": "asset_7d158db9ff10958254d09f87"}, {"sharp_score": 5603.1, "med_score": 944.0, "label": "sharp", "asset_id": "asset_4a018fe9fb67c1da4fcb02b7"}, {"sharp_score": 4158.8, "med_score": 812.9, "label": "sharp", "asset_id": "asset_d5c6e35f3e2486bb41a97e0f"}, {"sharp_score": 2454.0, "med_score": 702.5, "label": "sharp", "asset_id": "asset_ea12620e0e5be8967e266d42"}, {"sharp_score": 1546.4, "med_score": 166.6, "label": "sharp", "asset_id": "asset_3d3fd2c8c3cf5ef8b99d9545"}, {"sharp_score": 1850.5, "med_score": 656.3, "label": "sharp", "asset_id": "asset_1487bc9aa031ceb26e2f7d07"}, {"sharp_score": 2040.1, "med_score": 377.2, "label": "sharp", "asset_id": "asset_1fc57b7678816c3fad91b386"}, {"sharp_score": 3116.1, "med_score": 1311.9, "label": "sharp", "asset_id": "asset_2a8a99e808c9661074c0e9bb"}, {"sharp_score": 2629.5, "med_score": 905.8, "label": "sharp", "asset_id": "asset_4e23f6f9dfdad77c7c62858b"}, {"sharp_score": 8663.5, "med_score": 5046.0, "label": "sharp", "asset_id": "asset_75431101451b6d1983222d5a"}, {"sharp_score": 1968.9, "med_score": 380.1, "label": "sharp", "asset_id": "asset_653da45fa9c6cf8ec9ecdf76"}, {"sharp_score": 4490.2, "med_score": 1812.9, "label": "sharp", "asset_id": "asset_42fa38b8706af5f17e8dd74f"}, {"sharp_score": 1598.8, "med_score": 763.4, "label": "sharp", "asset_id": "asset_072c3a771e8271a7adf06640"}, {"sharp_score": 1558.5, "med_score": 657.7, "label": "sharp", "asset_id": "asset_43980853da0cb6c191416ee4"}, {"sharp_score": 1238.9, "med_score": 608.5, "label": "sharp", "asset_id": "asset_8a902fd334751981df4450f2"}, {"sharp_score": 1715.8, "med_score": 876.9, "label": "sharp", "asset_id": "asset_dd44320b8338625bb12e8ff2"}, {"sharp_score": 2443.9, "med_score": 905.5, "label": "sharp", "asset_id": "asset_82fd45717b932b7bd81e3af9"}, {"sharp_score": 840.1, "med_score": 404.7, "label": "soft", "asset_id": "asset_cfaba0707bff4ec583f3be04"}, {"sharp_score": 812.5, "med_score": 160.3, "label": "soft", "asset_id": "asset_6195aa27308fcc09df066668"}, {"sharp_score": 896.7, "med_score": 259.2, "label": "soft", "asset_id": "asset_e8ddcbd069a6adfb481fd6e0"}, {"sharp_score": 579.2, "med_score": 150.5, "label": "soft", "asset_id": "asset_e840c618e6dfc54ac44d59fc"}, {"sharp_score": 851.5, "med_score": 36.9, "label": "soft", "asset_id": "asset_4e5b42436e9d14a096ff6651"}, {"sharp_score": 524.9, "med_score": 93.6, "label": "soft", "asset_id": "asset_028b404869b3d5c02c3a3b4a"}, {"sharp_score": 353.4, "med_score": 52.7, "label": "soft", "asset_id": "asset_d39e0f1dd16e16a8a1abc9b7"}, {"sharp_score": 1124.9, "med_score": 502.8, "label": "soft", "asset_id": "asset_11168dd72cc207075f553bc1"}, {"sharp_score": 599.0, "med_score": 275.6, "label": "soft", "asset_id": "asset_898c1cac7d4d2acc123ae63f"}, {"sharp_score": 1165.4, "med_score": 462.9, "label": "soft", "asset_id": "asset_6288e1fbce3d8946fb56eb74"}, {"sharp_score": 713.3, "med_score": 395.1, "label": "soft", "asset_id": "asset_6018dcc60a05223ab2213f36"}, {"sharp_score": 516.6, "med_score": 120.3, "label": "soft", "asset_id": "asset_8d6fb47d4f909b2447ffa1ca"}, {"sharp_score": 1013.0, "med_score": 214.2, "label": "soft", "asset_id": "asset_2513a11ddef848f4b372567c"}, {"sharp_score": 1027.8, "med_score": 611.8, "label": "soft", "asset_id": "asset_c966aa92907c2674d3487fbe"}, {"sharp_score": 939.3, "med_score": 166.3, "label": "soft", "asset_id": "asset_e6264f0219584728fa3219f7"}, {"sharp_score": 1020.2, "med_score": 564.3, "label": "soft", "asset_id": "asset_79572356192de4b1d8975583"}, {"sharp_score": 805.4, "med_score": 315.8, "label": "soft", "asset_id": "asset_efb0200fff19ff0febd0f63e"}, {"sharp_score": 461.1, "med_score": 268.6, "label": "soft", "asset_id": "asset_fb82cd89f2d46b6eb59287c1"}, {"sharp_score": 906.7, "med_score": 425.4, "label": "soft", "asset_id": "asset_0e6a0762903ec1cf2cc693a9"}, {"sharp_score": 367.2, "med_score": 43.0, "label": "soft", "asset_id": "asset_954be9d848fffad28d83ef80"}, {"sharp_score": 192.2, "med_score": 33.5, "label": "blurry", "asset_id": "asset_9b5566321219a239234a2a22"}, {"sharp_score": 240.5, "med_score": 107.3, "label": "blurry", "asset_id": "asset_9bd357c1a17245874b272b11"}, {"sharp_score": 200.2, "med_score": 75.6, "label": "blurry", "asset_id": "asset_1b3dfe535f1fbf2dc570dc69"}, {"sharp_score": 166.0, "med_score": 62.0, "label": "blurry", "asset_id": "asset_5818ff2274f3dc2070eeb1f5"}, {"sharp_score": 221.2, "med_score": 0.0, "label": "blurry", "asset_id": "asset_e4ebc32688a9d45a0daf391b"}, {"sharp_score": 162.2, "med_score": 43.4, "label": "blurry", "asset_id": "asset_8f3ff0f209739bc044e8b2db"}, {"sharp_score": 45.7, "med_score": 24.0, "label": "blurry", "asset_id": "asset_a1b4e3b5332277124804f779"}, {"sharp_score": 281.7, "med_score": 41.6, "label": "blurry", "asset_id": "asset_d0f8ce40e0ac61ba164781e7"}, {"sharp_score": 121.1, "med_score": 61.9, "label": "blurry", "asset_id": "asset_48dafcf5ca578149b9d06396"}, {"sharp_score": 224.6, "med_score": 70.1, "label": "blurry", "asset_id": "asset_ab9dd0459c4cd4dfc7fd0537"}, {"sharp_score": 240.8, "med_score": 47.1, "label": "blurry", "asset_id": "asset_1ee6defc8e610587503cd336"}, {"sharp_score": 226.1, "med_score": 135.8, "label": "blurry", "asset_id": "asset_80f2ea4ae4798813ce1590cc"}, {"sharp_score": 100.1, "med_score": 59.1, "label": "blurry", "asset_id": "asset_a033daf9013ca30e76f46be7"}, {"sharp_score": 266.0, "med_score": 45.4, "label": "blurry", "asset_id": "asset_d0ea7518ce64b1e16788ece0"}, {"sharp_score": 67.6, "med_score": 35.7, "label": "blurry", "asset_id": "asset_ddba220bd6d6ce3097b1036b"}, {"sharp_score": 295.0, "med_score": 93.0, "label": "blurry", "asset_id": "asset_00f3ade1ee77b273479f6ad0"}, {"sharp_score": 110.0, "med_score": 24.1, "label": "blurry", "asset_id": "asset_84b5b1ca236946177e3c4049"}, {"sharp_score": 283.6, "med_score": 60.8, "label": "blurry", "asset_id": "asset_888a4136facb7b52a67bd83b"}, {"sharp_score": 205.3, "med_score": 37.2, "label": "blurry", "asset_id": "asset_0312079c2d367257ba47f75a"}, {"sharp_score": 293.5, "med_score": 38.7, "label": "blurry", "asset_id": "asset_0937d7094d59eb409fe1453c"}], "dedup": [{"engine": "phash", "keep": "asset_133f215c9d966f821ba11e57", "duplicates": ["asset_7ad53d2e674036f782c13888"], "sizes": {"asset_133f215c9d966f821ba11e57": 1559677, "asset_7ad53d2e674036f782c13888": 1559677}}, {"engine": "phash", "keep": "asset_4b53367681b304b30f18550a", "duplicates": ["asset_4cbd7fffb939d34ce8235a8d"], "sizes": {"asset_4cbd7fffb939d34ce8235a8d": 18805555, "asset_4b53367681b304b30f18550a": 19155308}}, {"engine": "siglip", "keep": "asset_2f487dcf2d1bb8b319385130", "duplicates": ["asset_4eabdc6daf79669a535f2394"], "sizes": {"asset_2f487dcf2d1bb8b319385130": 24539591, "asset_4eabdc6daf79669a535f2394": 23526099}}, {"engine": "siglip", "keep": "asset_1bc2828af80cb8451ffd2ab2", "duplicates": ["asset_a57e2061b33574b8062f085e", "asset_bdca5b5acfa24bac0620c8ab"], "sizes": {"asset_1bc2828af80cb8451ffd2ab2": 2972682, "asset_a57e2061b33574b8062f085e": 2824737, "asset_bdca5b5acfa24bac0620c8ab": 2929949}}, {"engine": "siglip", "keep": "asset_43a88246507ca16bbaad5e96", "duplicates": ["asset_524f20a3917b56d0b2228136", "asset_5be25e9c259e44e601a223d3", "asset_6005fc3113c389ea297dffe8", "asset_6011d2ac133ebd250e2fc724", "asset_7ec6c69ff90103284dcb6336", "asset_8dc05624fff22921fc74ca9b", "asset_a9ee5996302be2568af53280", "asset_af1e0af72bd430aafabe9547", "asset_fae9071bceb3aed0fcfb34b2"], "sizes": {"asset_43a88246507ca16bbaad5e96": 12138552, "asset_524f20a3917b56d0b2228136": 10642277, "asset_5be25e9c259e44e601a223d3": 9556691, "asset_6005fc3113c389ea297dffe8": 8453270, "asset_6011d2ac133ebd250e2fc724": 9285440, "asset_7ec6c69ff90103284dcb6336": 10373562, "asset_8dc05624fff22921fc74ca9b": 12021493, "asset_a9ee5996302be2568af53280": 11450076, "asset_af1e0af72bd430aafabe9547": 9029547, "asset_fae9071bceb3aed0fcfb34b2": 9324575}}, {"engine": "phash", "keep": "asset_6b13e56a737a6cb27e9c68e1", "duplicates": ["asset_df7341c101667ca606002402"], "sizes": {"asset_6b13e56a737a6cb27e9c68e1": 2595251, "asset_df7341c101667ca606002402": 2595251}}, {"engine": "phash", "keep": "asset_60bb518191f11c6e21fa0922", "duplicates": ["asset_bde358decb8ae6288bc35056"], "sizes": {"asset_bde358decb8ae6288bc35056": 1747319, "asset_60bb518191f11c6e21fa0922": 1762411}}, {"engine": "phash", "keep": "asset_444d0470a5c2e446e69bf11d", "duplicates": ["asset_d1acc735008163e4aad890d9"], "sizes": {"asset_444d0470a5c2e446e69bf11d": 1007711, "asset_d1acc735008163e4aad890d9": 963471}}, {"engine": "siglip", "keep": "asset_501ee55ae34b649e6f92fbdb", "duplicates": ["asset_7a1811da672a70f6f3ebc9eb", "asset_9e020b2b81c2679511f4e922", "asset_1968254421110b2675a8e7ef"], "sizes": {"asset_7a1811da672a70f6f3ebc9eb": 3034023, "asset_9e020b2b81c2679511f4e922": 3126552, "asset_1968254421110b2675a8e7ef": 3389069, "asset_501ee55ae34b649e6f92fbdb": 3510547}}, {"engine": "phash", "keep": "asset_63e590bdddd43a43bd5d322f", "duplicates": ["asset_e81f866b9ddb87d2a4784d29"], "sizes": {"asset_e81f866b9ddb87d2a4784d29": 26650064, "asset_63e590bdddd43a43bd5d322f": 30450381}}, {"engine": "phash", "keep": "asset_0bedb9b2e33132de7fa1481d", "duplicates": ["asset_55c63b9c43916d37294d8767", "asset_d1ebc0c187c04a7f5ef26642"], "sizes": {"asset_0bedb9b2e33132de7fa1481d": 10508188, "asset_55c63b9c43916d37294d8767": 10502984, "asset_d1ebc0c187c04a7f5ef26642": 10029424}}, {"engine": "phash", "keep": "asset_4d938946cc2dcbdf21ebab3d", "duplicates": ["asset_22e9561e1a9d3afc4b28151a"], "sizes": {"asset_4d938946cc2dcbdf21ebab3d": 4703751, "asset_22e9561e1a9d3afc4b28151a": 4686670}}], "top5": [{"asset_id": "asset_c8e2abaf2ecd37d6eb6c4ca9", "aesthetic": 24.113, "day": "2026-08-28"}, {"asset_id": "asset_033dc00952401e6e96e4c645", "aesthetic": 22.899, "day": "2026-08-28"}, {"asset_id": "asset_98ee942877952bc0f4b6ceda", "aesthetic": 22.392, "day": "2026-08-28"}, {"asset_id": "asset_05e314e26a14cbff4e44fadd", "aesthetic": 21.821, "day": "2026-08-28"}, {"asset_id": "asset_b1770f09b09ce4a6b4df96b4", "aesthetic": 18.737, "day": "2026-08-28"}, {"asset_id": "asset_970b69321279690550513074", "aesthetic": 11.014, "day": "2026-08-26"}, {"asset_id": "asset_de80780c06931c4809f4f159", "aesthetic": 4.483, "day": "2026-08-26"}, {"asset_id": "asset_51ccdaca13cbb0015b049094", "aesthetic": 0.295, "day": "2026-08-26"}, {"asset_id": "asset_05da89702813ccf6014b7c34", "aesthetic": -9.162, "day": "2026-08-26"}, {"asset_id": "asset_3fd236e7ad8b53ced23f7fe4", "aesthetic": -12.666, "day": "2026-08-26"}, {"asset_id": "asset_1690a94478c81c18b94f917d", "aesthetic": 27.378, "day": "2026-08-18"}, {"asset_id": "asset_67550301cb5e67d949da3409", "aesthetic": 15.063, "day": "2026-08-18"}, {"asset_id": "asset_fc9bdb2e3a51356483c7ad25", "aesthetic": 13.788, "day": "2026-08-18"}, {"asset_id": "asset_a3b0cc8be96d424c821a5e82", "aesthetic": 11.962, "day": "2026-08-18"}, {"asset_id": "asset_16f0357d9db124b406023d61", "aesthetic": 10.239, "day": "2026-08-18"}, {"asset_id": "asset_7a5d13164b0f984e97eba036", "aesthetic": 21.455, "day": "2026-08-17"}, {"asset_id": "asset_5c2a36b3b3cdd61da8b004e9", "aesthetic": 10.477, "day": "2026-08-17"}, {"asset_id": "asset_300f7921ae09fb2e2e9c5790", "aesthetic": 7.354, "day": "2026-08-17"}, {"asset_id": "asset_fd5826254d1f82a518204593", "aesthetic": -0.144, "day": "2026-08-17"}, {"asset_id": "asset_27ff650b6d346dd7b0421b32", "aesthetic": -10.892, "day": "2026-08-17"}], "crop": [{"method": "face", "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "asset_id": "asset_2c821e9068842d03e8dd0f0e"}, {"method": "face", "x": 0.0, "y": 0.1518, "w": 1.0, "h": 0.5625, "asset_id": "asset_09783222144a3d3fed847db8"}, {"method": "face", "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "asset_id": "asset_6f9f64308e1217cdc5e2e341"}, {"method": "face", "x": 0.0, "y": 0.1919, "w": 1.0, "h": 0.5625, "asset_id": "asset_623f00c9d8345c2b4f3a575a"}, {"method": "face", "x": 0.0, "y": 0.0955, "w": 1.0, "h": 0.5625, "asset_id": "asset_58ef869c914cab28b96c6c7e"}, {"method": "face", "x": 0.0, "y": 0.1403, "w": 1.0, "h": 0.5625, "asset_id": "asset_37c5422f9562080388cf766c"}, {"method": "saliency", "x": 0.0, "y": 0.2349, "w": 1.0, "h": 0.5625, "asset_id": "asset_2c0c36db126ff711b1ad60e6"}, {"method": "saliency", "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "asset_id": "asset_0937d7094d59eb409fe1453c"}, {"method": "saliency", "x": 0.0, "y": 0.0686, "w": 1.0, "h": 0.5625, "asset_id": "asset_6f7cc67a5ccc261039d3f046"}, {"method": "saliency", "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "asset_id": "asset_63a406abc5187f28ac20e777"}, {"method": "saliency", "x": 0.0, "y": 0.1617, "w": 1.0, "h": 0.5625, "asset_id": "asset_598453b7d8d2289ee8f9327d"}, {"method": "saliency", "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "asset_id": "asset_37eb9e64cb55b28336111447"}, {"method": "horizon", "x": 0.0, "y": 0.3146, "w": 1.0, "h": 0.5625, "asset_id": "asset_bb6acd1247cdb8c5d07cd278"}, {"method": "horizon", "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "asset_id": "asset_20a9192cbae9e1d06030706b"}, {"method": "horizon", "x": 0.0, "y": 0.4, "w": 1.0, "h": 0.5625, "asset_id": "asset_0856ceef3821c1c1bf418801"}, {"method": "horizon", "x": 0.0, "y": 0.3187, "w": 1.0, "h": 0.5625, "asset_id": "asset_dbccb72edb36b8a177d427b2"}, {"method": "horizon", "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "asset_id": "asset_54a1fbba0c338798973720ee"}, {"method": "horizon", "x": 0.0, "y": 0.3438, "w": 1.0, "h": 0.5625, "asset_id": "asset_4cef86c4ece8c58869f2aeb8"}, {"method": "center", "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "asset_id": "asset_f47592af178119fa8329f4f5"}, {"method": "center", "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "asset_id": "asset_2d5e512d6c152fdf0bc41b6b"}, {"method": "center", "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "asset_id": "asset_125203806341b7b5293d00f2"}, {"method": "center", "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "asset_id": "asset_67f1d71fa372074487ca3429"}, {"method": "center", "x": 0.0, "y": 0.2188, "w": 1.0, "h": 0.5625, "asset_id": "asset_5dfbb564dbdfabe857e05cd2"}, {"method": "center", "x": 0.0, "y": 0.2188, "w": 1.0, "h": 0.5625, "asset_id": "asset_58d44e84270b0818e79c7fa1"}], "junk": [{"asset_id": "asset_3d0896b38fd6aebd6bec314e", "kind": "qrcode_undecoded", "content": null, "deep_kind": "qrcode", "deep_content": "https://yundadan-im-extend.zto.com/toMin"}, {"asset_id": "asset_59e8fec0f29fa9e88aa9b96a", "kind": "qrcode_undecoded", "content": null, "deep_kind": "qrcode", "deep_content": "https://yundadan-im-extend.zto.com/toMin"}, {"asset_id": "asset_2fbe01d1be1b44242b2243e2", "kind": "qrcode_undecoded", "content": null}, {"asset_id": "asset_fadfe0d27fda8b5d66be8f42", "kind": "qrcode_undecoded", "content": null}, {"asset_id": "asset_7079ac1c7cee0943e0b024d5", "kind": "qrcode_undecoded", "content": null}, {"asset_id": "asset_624d51ac4434256077036a3a", "kind": "qrcode_undecoded", "content": null}, {"asset_id": "asset_5b6bdb0204261640599307b6", "kind": "qrcode_undecoded", "content": null}, {"asset_id": "asset_fdf26bcfc6eb46e3f557e89a", "kind": "qrcode_undecoded", "content": null}, {"asset_id": "asset_eef506d5c1592235e78b89e5", "kind": "qrcode_undecoded", "content": null}, {"asset_id": "asset_2b4f82e3477853282de28e81", "kind": "qrcode_undecoded", "content": null}]};
+const thumb = a => `/thumb?asset=${a}&edge=480`;
+const ph = (a, cls) => `<img loading="lazy" src="${thumb(a)}" onerror="this.replaceWith(Object.assign(document.createElement('div'),{style:'padding:40% 8px;text-align:center;color:#999;font-size:11px',textContent:'缩略图不可用'}))">`;
+
+const views = {
+/* ① 模糊检测 ------------------------------------------------ */
+blur(){const m=document.createElement('div');
+ m.innerHTML=`<div class="note"><b>标记规则：</b>清晰(绿) / 偏软(黄) / 模糊(红)，取分块 top-25% Laplacian 方差。
+ 全量跑完后回写 quality_class，相册可一键"只看清晰的"。评分越高越清晰。</div>
+ <div class="filters" id="bf">
+   <button data-f="all" class="on">全部 ${DATA.blur.length}</button>
+   <button data-f="sharp">清晰 ${DATA.blur.filter(r=>r.label==='sharp').length}</button>
+   <button data-f="soft">偏软 ${DATA.blur.filter(r=>r.label==='soft').length}</button>
+   <button data-f="blurry">模糊 ${DATA.blur.filter(r=>r.label==='blurry').length}</button>
+ </div><div class="grid" id="bg"></div>`;
+ const draw=f=>{m.querySelector('#bg').innerHTML=DATA.blur
+   .filter(r=>f==='all'||r.label===f)
+   .map(r=>`<div class="card"><div class="ph">${ph(r.asset_id)}
+     <span class="badge b-${r.label}">${({sharp:'清晰',soft:'偏软',blurry:'模糊'})[r.label]}</span>
+     <span class="score">${r.sharp_score}</span></div>
+     <div class="meta"><span class="id">…${r.asset_id.slice(-6)}</span><span>中位 ${r.med_score}</span></div></div>`).join('');};
+ draw('all');
+ m.querySelector('#bf').onclick=e=>{const b=e.target.closest('button');if(!b)return;
+   m.querySelectorAll('#bf button').forEach(x=>x.classList.toggle('on',x===b));draw(b.dataset.f);};
+ return m;},
+
+/* ② 相似去重 ------------------------------------------------ */
+dedup(){const m=document.createElement('div');
+ m.innerHTML=`<div class="note"><b>展示规则：</b>绿框=建议保留（组内文件最大），灰暗=清理候选。
+ 点击灰图切换选定状态——确认后的清理清单走 asset_filter_v0（A4 联调），本页不写库。</div>` +
+ DATA.dedup.map((g,i)=>`<div class="dgroup">
+   <div class="head"><span class="engine">${g.engine}</span>
+     <span>组 ${i+1} · 保留 1 张 + 候选 ${g.duplicates.length} 张</span></div>
+   <div class="drow">
+     <div class="ditem keep"><div class="ph">${ph(g.keep)}<span class="tag">保留</span></div>
+       <div class="sz">${(g.sizes[g.keep]/1024).toFixed(0)} KB · …${g.keep.slice(-6)}</div></div>
+     ${g.duplicates.map(d=>`<div class="ditem dup" onclick="this.classList.toggle('dup')">
+       <div class="ph">${ph(d)}<span class="tag">候选</span></div>
+       <div class="sz">${(g.sizes[d]/1024).toFixed(0)} KB · …${d.slice(-6)}</div></div>`).join('')}
+   </div></div>`).join('');
+ return m;},
+
+/* ③ 每日五张 ------------------------------------------------ */
+top5(){const m=document.createElement('div');
+ const by={};DATA.top5.forEach(r=>{(by[r.day]=by[r.day]||[]).push(r)});
+ m.innerHTML=`<div class="note"><b>展示规则：</b>LAION Aesthetic V2 打分，每天取前 5。
+ 排名徽标 + 原始分数。可做"每日精选"独立 tab 或时间轴置顶折叠。</div>` +
+ Object.entries(by).map(([d,rs])=>`<div class="dayhead">${d}<span>共 ${rs.length} 张精选（当日全量打分排序）</span></div>
+   <div class="top5">${rs.map((r,i)=>`<div class="card"><div class="ph">${ph(r.asset_id)}
+     <span class="rank">${i+1}</span><span class="score">${r.aesthetic}</span></div>
+     <div class="meta"><span class="id">…${r.asset_id.slice(-6)}</span></div></div>`).join('')}</div>`).join('<br>');
+ return m;},
+
+/* ⑤ 智能裁切 ------------------------------------------------ */
+crop(){const m=document.createElement('div');
+ m.innerHTML=`<div class="note"><b>展示规则：</b>橙窗=4:3 横窗，紫窗=3:4 竖窗（人像特写自动转竖）。
+ 蒙版=裁掉区域。DB 只存 {x,y,w,h,method} 归一化参数，前端按参数渲染，不生成新图。
+ method：face 人脸 / saliency 显著主体 / horizon 地平线 / center 中心。</div>
+ <div class="cropgrid">` + DATA.crop.map(r=>{
+   const style=`left:${r.x*100}%;top:${r.y*100}%;width:${r.w*100}%;height:${r.h*100}%`;
+   const v=r.w<r.h?' v':'';
+   return `<div class="card cropbox"><div class="ph" style="aspect-ratio:auto">
+     <img loading="lazy" src="${thumb(r.asset_id)}" style="width:100%;display:block"
+       onerror="this.closest('.card').style.display='none'">
+     <div class="mwin${v}" style="${style}"></div>
+     <span class="mlabel"><span class="m-label${v}">${({face:'人脸',saliency:'主体',horizon:'地平线',center:'中心'})[r.method]}${v?' · 3:4':''}</span></span>
+     </div><div class="meta"><span class="id">…${r.asset_id.slice(-6)}</span><span>${({face:'人脸',saliency:'主体',horizon:'地平线',center:'中心'})[r.method]}</span></div></div>`;
+ }).join('') + '</div>';
+ return m;},
+
+/* ④ 截图/收款码 --------------------------------------------- */
+junk(){const m=document.createElement('div');
+ const tag=r=>({payment_qrcode_wechat:'微信收款码',payment_qrcode_alipay:'支付宝收款码',
+   qrcode:'二维码已解码',qrcode_undecoded:'QR 检出即隐藏'})[r.deep_kind||'qrcode_undecoded'];
+ const color=r=>r.deep_kind&&r.deep_kind!=='qrcode_undecoded'?'#e5484d':'#2f31f5';
+ m.innerHTML=`<div class="note"><b>展示规则：</b>检出二维码即写过滤表隐藏（含解不出内容的，2026-09-09 产品决策：检出即过滤，无深扫精扫阶段）；
+ 红标为历史深扫解出的 微信收款码/支付宝码/普通码（数据保留仅作展示）。
+ 命中项进 asset_filter_v0（reason=JUNK_XXX）默认从墙面隐藏，可恢复。本页不写库。</div>
+ <div class="legend">全量 12491 张：检出 QR ${'1130'} 张已直接隐藏，历史深扫解码 ${DATA.junk.filter(r=>r.deep_kind).length} 张（本页抽样展示）：</div>
+ <div class="grid">` + DATA.junk.map(r=>`<div class="card jcard"><div class="ph">${ph(r.asset_id)}
+   <span class="badge" style="background:${color(r)}">${tag(r)}</span></div>
+   <div class="meta"><span class="id">…${r.asset_id.slice(-6)}</span><span>${(r.deep_content||'').slice(0,18)}</span></div></div>`).join('') + '</div>';
+ return m;}
+};
+
+const tabs=document.getElementById('tabs'), main=document.getElementById('main');
+function show(t){main.replaceChildren(views[t]());}
+tabs.onclick=e=>{const b=e.target.closest('button');if(!b)return;
+ tabs.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));show(b.dataset.t);};
+show('blur');
+</script>
+</body>
+</html>

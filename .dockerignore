@@ -1,0 +1,24 @@
+# 构建上下文瘦身：只让 Dockerfile 显式 COPY 的文件进镜像
+data/
+logs/
+outputs/
+eval/
+backups/
+_snapshots/
+__pycache__/
+.pytest_cache/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.bak*
+*.tar.gz
+test_*.py
+audit_*.py
+run_night_vlm.sh
+dump_schema.py
+backup_db.sh
+HANDOVER.md
+Dockerfile
+docker-compose.yml
+.dockerignore

@@ -1,0 +1,31 @@
+# ============================================================
+# 家庭回忆相册 — Docker Compose 部署
+#   构建并启动   docker compose up -d --build
+#   看日志       docker compose logs -f
+#   （数据全在数据卷里，换镜像升级不丢库）
+# 首次构建前先运行：python3 scripts/download_models.py
+# ============================================================
+
+services:
+  album:
+    build: .
+    image: family-memory-album:latest
+    container_name: family-memory-album
+    restart: unless-stopped
+    ports:
+      - "8788:8788"
+    environment:
+      - FF_DATA_DIR=/data
+      # 人脸后端：opencv（YuNet+SFace，Apache-2.0，默认合规）
+      # 换 adaface 前先 python3 scripts/download_models.py --adaface 并自担权重许可
+      - FF_FACE_BACKEND=opencv
+    volumes:
+      - ./data:/data
+      # 照片目录按需挂载（只读即可），首次向导里填容器内路径：
+      # - /path/to/your/photos:/photos:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import http.client,os; c=http.client.HTTPConnection('127.0.0.1', int(os.environ.get('PORT','8788')), timeout=12); c.request('GET','/'); r=c.getresponse(); r.read(); raise SystemExit(0 if r.status < 500 else 1)"]
+      interval: 60s
+      timeout: 15s
+      start_period: 30s
+      retries: 3

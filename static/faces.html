@@ -1,0 +1,930 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>照片标注人物</title>
+<style>
+:root{--bg:#ffffff;--ink:#131314;--muted:#85857f;--line:#ebebe9;--accent:#2f31f5}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:"Helvetica Neue","PingFang SC",sans-serif}button,select,input{font:inherit}
+.top{min-height:72px;padding:12px 28px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:16px;position:sticky;top:0;background:#f4f4f2f2;backdrop-filter:blur(16px);z-index:5}.top h1{font-size:18px;margin:0}.top p,.status{font-size:12px;color:var(--muted);margin:3px 0 0}
+.back,.primary,.quiet{border:1px solid var(--line);background:#ffffff;border-radius:22px;padding:9px 15px;cursor:pointer}.primary{background:var(--ink);color:#fff;border-color:var(--ink)}.quiet{background:#ffffff}
+.toolbar{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}.toolbar input{border:1px solid var(--line);border-radius:20px;padding:9px 13px;background:#ffffff;min-width:170px}
+.tabs{display:flex;gap:6px;background:#ebebe9;border-radius:22px;padding:4px}.tabs button{border:0;background:transparent;border-radius:18px;padding:7px 14px;cursor:pointer;font-size:13px}.tabs button.on{background:#ffffff;font-weight:600;box-shadow:0 1px 3px #0002}
+.wrap{padding:24px 28px;max-width:1180px;margin:auto}.status{margin-bottom:14px}
+.searchbar{display:flex;gap:8px;margin-bottom:16px}.searchbar input{flex:1;border:1px solid var(--line);border-radius:20px;padding:10px 14px;background:#ffffff}
+.grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.shot{position:relative;border:0;padding:0;background:#ebebe9;border-radius:10px;overflow:hidden;cursor:pointer}.shot img{width:100%;display:block}.shot span{position:absolute;left:6px;bottom:6px;background:#000b;color:#fff;border-radius:11px;padding:3px 7px;font-size:10px}
+
+/* ---- 单人物人脸池模式 ---- */
+.pool-banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:-6px 0 16px;padding:12px 16px;background:#ffffff;border:1px solid var(--line);border-radius:13px}
+.pool-banner .who{font-weight:600;font-size:15px}
+.pool-banner .hint{color:var(--muted);font-size:12px}
+.pool-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-left:auto}
+.pool-controls label{font-size:12px;color:var(--muted)}
+.pool-controls input[type=range]{width:120px}
+.pool-controls .num{font-size:12px;color:var(--muted);min-width:70px}
+.pool-controls .quiet{padding:7px 14px;font-size:12px;border-radius:18px}
+.pool-controls .quiet.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.pool{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;margin-bottom:90px}
+.fcard{position:relative;background:#ffffff;border:1px solid var(--line);border-radius:13px;overflow:hidden;cursor:pointer;border:3px solid transparent;transition:box-shadow .1s}
+.fcard:hover{box-shadow:0 4px 14px #00000014}
+.fcard.sel{border-color:var(--accent)}
+.fcard .crop{position:relative;aspect-ratio:1;background:#ebebe9;overflow:hidden}
+.fcard .crop img{position:absolute;display:block;max-width:none}
+.fcard .crop.err{background:#ebebe9}
+.fcard .meta{padding:7px 9px;font-size:11px;color:var(--muted);display:flex;justify-content:space-between}
+.fcard .sim{position:absolute;left:6px;top:6px;background:var(--accent);color:#fff;border-radius:10px;padding:2px 7px;font-size:10px;font-weight:600;z-index:1}
+.fcard .op{position:absolute;right:4px;top:4px;border:0;background:#0009;color:#fff;border-radius:8px;padding:3px 7px;font-size:10px;cursor:pointer;opacity:0;transition:opacity .15s}
+.fcard:hover .op{opacity:1}
+.pool-bar{position:fixed;left:0;right:0;bottom:0;background:#ffffff;border-top:1px solid var(--line);padding:12px 28px;display:flex;align-items:center;gap:12px;justify-content:space-between;z-index:8;box-shadow:0 -2px 10px #0000000a}
+/* ===== 搜索结果 → 人脸网格（直接标注） ===== */
+.face-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;padding-bottom:90px}
+.face-grid .face{position:relative;background:#ffffff;border:1px solid var(--line);border-radius:13px;padding:10px}
+.face-grid .face .crop{position:relative;aspect-ratio:1;background:#ebebe9;border-radius:9px;overflow:hidden;margin-bottom:8px}
+.face-grid .face .crop img{position:absolute;width:100%;height:100%;object-fit:cover;display:block}
+.face-grid .face .op{position:absolute;right:4px;top:4px;border:0;background:#0009;color:#fff;border-radius:8px;padding:3px 7px;font-size:10px;cursor:pointer;opacity:0;transition:opacity .15s}
+.face-grid .face:hover .op{opacity:1}
+.face-grid .face .meta{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:6px}
+.face-grid .face .who{font-size:12px;padding:7px 9px;width:100%;border:1px solid var(--line);border-radius:9px;background:#ffffff}
+.face-grid .face .who.mod{border-color:var(--accent);background:#fdeeee}
+.pool-bar .actions{display:flex;gap:8px;flex-wrap:wrap}
+
+/* ---- 高频未标注簇卡片(保留给无 person 参数时的照片标注页) ---- */
+.clusters{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:14px}
+.cl{background:#ffffff;border:1px solid var(--line);border-radius:13px;padding:12px}
+.cl-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+.cl-head b{font-size:14px}.cl-head span{font-size:11px;color:var(--muted)}
+.cl-crops{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.crop{position:relative;aspect-ratio:1;background:#ebebe9;border-radius:9px;overflow:hidden;cursor:pointer;border:2px solid transparent;padding:0}
+.crop.sel{border-color:var(--accent)}
+.crop img{position:absolute;display:block;max-width:none}
+.crop .dt{position:absolute;left:3px;bottom:3px;background:#0009;color:#fff;border-radius:8px;padding:1px 5px;font-size:10px;pointer-events:none}
+.crop .op{position:absolute;right:3px;top:3px;border:0;background:#0009;color:#fff;border-radius:7px;padding:2px 6px;font-size:10px;cursor:pointer;opacity:0;transition:opacity .15s}
+.crop:hover .op{opacity:1}
+.cl-foot{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px}
+.cl-foot select,.cl-foot button{border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:#ffffff;font-size:13px}
+.cl-foot .primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+.cl-foot .wholectrl{grid-column:1/3;display:flex;gap:6px}
+.cl-foot .wholectrl button{flex:1}
+.cl-hint{font-size:11px;color:var(--muted);margin-top:8px}
+
+.faces{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.face{background:#ffffff;border:1px solid var(--line);border-radius:13px;padding:10px}
+.face.newface{border:2px dashed var(--accent)}
+.face .crop{position:relative;background:#ebebe9;border-radius:9px;overflow:hidden;margin-bottom:8px}
+.face .crop img{width:100%;display:block}
+.face .box{position:absolute;border:2px solid #fff;box-shadow:0 0 0 2px #1118;pointer-events:none}
+.face .meta{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:8px}
+.face select,.face .np{width:100%;border:1px solid var(--line);border-radius:9px;padding:9px;background:#ffffff}
+.face .np{margin-top:6px;display:grid;gap:6px;grid-template-columns:1fr 1fr}
+.face .rm,.crop .rm{position:absolute;top:8px;right:8px;z-index:2;border:0;background:#000b;color:#fff;border-radius:50%;width:24px;height:24px;cursor:pointer;font-size:13px;line-height:1;opacity:0;transition:opacity .15s}
+.face:hover .rm,.crop:hover .rm{opacity:1}
+.face .rm:focus,.crop .rm:focus{opacity:1}
+.badge{position:absolute;left:6px;bottom:6px;background:#000b;color:#fff;border-radius:11px;padding:3px 7px;font-size:10px}
+.stage{position:relative;display:inline-block;border-radius:13px;overflow:hidden;line-height:0;touch-action:none;cursor:crosshair;user-select:none;-webkit-user-select:none}
+.stage img{max-width:100%;max-height:56vh;display:block;pointer-events:none}
+.fb{position:absolute;border:2px solid #fff;box-shadow:0 0 0 2px #1117;pointer-events:none;border-radius:4px}
+.fb i{position:absolute;left:4px;top:-22px;background:#000b;color:#fff;border-radius:9px;padding:2px 8px;font-size:11px;font-style:normal;white-space:nowrap;line-height:1.4}
+.fb.isnew{border-color:var(--accent);box-shadow:0 0 0 2px #e5484d55}
+#selRect{position:absolute;border:2px dashed var(--accent);background:#e5484d22;pointer-events:none;display:none;border-radius:4px}
+.photoview{margin-bottom:18px}.drawhint{font-size:12px;color:var(--muted);margin:8px 0 0}
+.empty{padding:30px;background:#ffffff;border:1px dashed var(--line);border-radius:13px;color:var(--muted)}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:26px;background:#131314;color:#fff;border-radius:14px;padding:12px 18px;font-size:13px;opacity:0;transition:opacity .25s;z-index:10;max-width:90vw}
+.sel-rect{position:absolute;border:1px dashed var(--accent);background:#e5484d22;pointer-events:none;display:none;z-index:3;border-radius:4px}
+/* ---- 从照片/视频新建人脸 ---- */
+.modal{position:fixed;inset:0;background:#0006;display:none;align-items:center;justify-content:center;z-index:20;padding:20px}
+.modal.on{display:flex}
+.modal-box{background:var(--bg);border:1px solid var(--line);border-radius:16px;width:100%;max-width:720px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column}
+.modal-head{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+.modal-head h3{margin:0;font-size:16px}
+.modal-body{padding:18px;overflow:auto}
+.modal-foot{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end}
+.upload-drop{border:2px dashed var(--line);border-radius:13px;padding:28px;text-align:center;background:#ffffff;cursor:pointer;transition:border-color .15s}
+.upload-drop:hover,.upload-drop.dragover{border-color:var(--accent)}
+.upload-drop input{display:none}
+.upload-preview{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-top:14px}
+.uface{position:relative;background:#ffffff;border:2px solid var(--line);border-radius:12px;padding:8px;cursor:pointer;text-align:center}
+.uface.sel{border-color:var(--accent);background:#fdeeee}
+.uface img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;display:block;background:#ebebe9}
+.uface span{font-size:11px;color:var(--muted)}
+.newface-form{display:grid;gap:10px;margin-top:14px}
+.newface-form label{font-size:12px;color:var(--muted)}
+.newface-form input,.newface-form select{border:1px solid var(--line);border-radius:10px;padding:9px 12px;background:#ffffff;width:100%}
+.modal .primary{padding:9px 18px}
+.modal .quiet{padding:9px 15px}
+@media(max-width:850px){.grid{grid-template-columns:repeat(4,1fr)}.top{align-items:flex-start;flex-wrap:wrap}.toolbar{margin-left:0;width:100%}.pool{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}}@media(max-width:560px){.grid{grid-template-columns:repeat(2,1fr)}.wrap{padding:14px}}
+</style><link rel="stylesheet" href="/theme.css?v=06"><link rel="stylesheet" href="/ui.css?v=2">
+</head>
+<body>
+<header class="top"><button class="back" onclick="location.href='/people.html'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;vertical-align:-2px"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> 人物管理</button>
+<div><h1 id="pageTitle">照片标注人物</h1><p>在照片上给脸标姓名关系（含拖框补漏检的脸），其余照片自动归类；人物上限 30</p></div>
+<div class="toolbar" id="tabsBar"><div class="tabs"><button id="tabPhoto" class="on" onclick="setMode('photo')">照片标注</button><button id="tabPool" onclick="setMode('pool')">未认领池</button></div></div>
+</header>
+<main class="wrap">
+  <div id="status" class="status">正在读取…</div>
+  <div id="poolBanner" class="pool-banner" style="display:none">
+    <span class="who" id="poolWho">—</span>
+    <span class="hint" id="poolHint">候选面孔按与 TA 的相似度排序，越像越靠前</span>
+    <div class="pool-controls">
+      <label id="threshBar">相似度阈值 <input id="thresh" type="range" min="0" max="0.80" step="0.05" value="0" oninput="onThreshChange()"><span id="threshVal">全部</span></label>
+      <button class="quiet" id="confirmedBtn" onclick="toggleConfirmed()">已确认 <b>0</b> 张</button>
+      <span class="num" id="poolNum">读取中…</span>
+    </div>
+  </div>
+  <div id="photoMode">
+    <div class="searchbar" id="searchBar"><input id="q" placeholder="按日期/文件名关键词筛选未标注人脸；留空显示全部" onkeydown="if(event.key==='Enter')searchAssets()"><button class="primary" onclick="searchAssets()">搜索人脸</button><button class="quiet" onclick="openCreateFaceModal()">+ 从照片/视频新建人脸</button></div>
+    <p class="status" style="margin:-8px 0 12px;font-size:11px">💡 直接展示所有未标注人脸，可用上方框按日期/文件名筛选；逐个选人物后底部一键保存。</p>
+<div id="shots"></div>
+    <div id="detail" style="display:none">
+      <div class="photoview"><div class="stage" id="stage"><img id="photoImg" decoding="async"><div id="boxes"></div><div id="selRect"></div></div><div id="photoMeta" class="status"></div><p class="drawhint">💡 在照片上<b>按住拖动</b>即可框选检测漏掉的脸（小脸/侧脸/远景常见）；松开后为这张脸选人物，一起保存。白框=已检测，橙框=你新拖的。</p></div>
+      <div style="display:flex;gap:8px;align-items:center;margin:10px 0 14px"><button class="quiet" onclick="closeDetail()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;vertical-align:-2px"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> 换一张照片</button><button id="saveLabels" class="primary" onclick="saveLabels()">保存标注并自动归类</button><span class="status" id="saveHint"></span></div>
+      <div id="faces" class="faces"></div>
+    </div>
+  </div>
+  <div id="poolMode" style="display:none">
+    <div style="display:flex;gap:8px;margin-bottom:14px"><select id="person"></select><button class="primary" id="save" onclick="savePool()">确认选中人脸</button><button class="quiet" onclick="selectAllGrid()">全选</button><button class="quiet" onclick="clearSel()">清除</button><span class="status" id="poolTip" style="align-self:center"></span></div>
+    <div id="grid" class="grid"></div>
+  </div>
+</main>
+<div id="createFaceModal" class="modal" onclick="if(event.target===this)closeCreateFaceModal()">
+  <div class="modal-box">
+    <div class="modal-head"><h3>从照片或视频新建人脸</h3><button class="quiet" onclick="closeCreateFaceModal()">关闭</button></div>
+    <div class="modal-body">
+      <label class="upload-drop" id="uploadDrop">
+        <input type="file" id="uploadInput" accept="image/*,video/*" onchange="onUploadFile(this)">
+        <div id="uploadHint">点击选择或拖拽照片/视频到此处<br><span style="font-size:12px;color:var(--muted)">支持 jpg/png/heic/mp4/mov 等格式</span></div>
+      </label>
+      <div id="uploadFaces" class="upload-preview" style="display:none"></div>
+      <div id="newFaceForm" class="newface-form" style="display:none">
+        <label>人物姓名（新建）</label>
+        <input id="newFaceName" placeholder="例如：小明">
+        <label>或归属到现有人物</label>
+        <select id="newFacePerson"><option value="">— 新建人物 —</option></select>
+      </div>
+      <div id="uploadStatus" class="status" style="margin-top:10px"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="quiet" onclick="closeCreateFaceModal()">取消</button>
+      <button class="primary" id="confirmCreateBtn" onclick="confirmCreateFace()" disabled>确认创建</button>
+    </div>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
+<script>
+let people=[], selected=new Set(), curAsset=null, curAssetMeta=null, curFaces=[], newFaces=[];
+let poolFaces=[], poolSel=new Set(), lastClickedIdx=-1, poolSortedBy='similarity';
+let gridModified=new Set();
+const urlParams=new URLSearchParams(location.search);
+const preselectPerson=urlParams.get('person');
+const isPoolMode=!!preselectPerson;
+const preselectName=()=>{const p=(people||[]).find(x=>x.person_id===preselectPerson);return p?(p.display_name||p.relationship_label||''):''};
+const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const NEW='__new__', SKIP='__skip__';
+function toast(msg){const t=$('toast');t.textContent=msg;t.style.opacity=1;clearTimeout(t._h);t._h=setTimeout(()=>t.style.opacity=0,4000)}
+async function loadPeople(){
+  const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const d=await r.json();people=d.people||[];
+  $('person').innerHTML=people.map(p=>`<option value="${esc(p.person_id)}">${esc(p.display_name||'未命名')}</option>`).join('');
+  if(preselectPerson) updatePoolBanner();
+}
+function setMode(m){
+  if(isPoolMode)return;
+  $('tabPhoto').classList.toggle('on',m==='photo');$('tabPool').classList.toggle('on',m==='pool');
+  $('photoMode').style.display=m==='photo'?'':'none';$('poolMode').style.display=m==='pool'?'':'none';
+  if(m==='pool'){loadPool()}else{loadFrequentUnlabeled()}
+}
+
+/* ---- 单人物人脸池 ---- */
+function updatePoolBanner(){
+  const name=preselectName();
+  if(!name){$('poolWho').textContent='未知人物';return}
+  $('poolWho').textContent=`正在为「${esc(name)}」添加人脸`;
+}
+async function loadFacePool(){
+  if(!preselectPerson)return;
+  $('pageTitle').textContent='添加人脸';
+  $('tabsBar').style.display='none';
+  $('searchBar').style.display='none';
+  $('poolBanner').style.display='';
+  $('status').textContent='正在按相似度排列候选面孔…';
+  try{
+    const threshold=parseFloat($('thresh').value);
+    const tv=$('threshVal');if(tv)tv.textContent=threshold<=0?'全部':threshold.toFixed(2);
+    const r=await fetch('/api/unlabeled/similar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({person_id:preselectPerson,threshold,limit:8000})});
+    const d=await r.json();if(!r.ok){toast(d.error||'读取失败');return}
+    poolFaces=d.faces||[];
+    poolSortedBy=d.sorted_by||'similarity';
+    const qualityMode=poolSortedBy==='quality';
+    $('threshBar').style.display=qualityMode?'none':'';
+    $('poolHint').textContent=qualityMode?'还没有已确认人脸，以下按质量排序，选几张即可建立识别基准':'默认加载全部候选面孔，按与 TA 的相似度排序（越像越靠前），可拖阈值收窄';
+    document.querySelectorAll('.selhigh').forEach(b=>b.style.display=qualityMode?'none':'');
+    renderPool();
+  }catch(e){$('status').textContent='读取失败：'+e.message}
+}
+function onThreshChange(){loadFacePool()}
+/* 新人脸裁切：以 bbox 中心放大 2 倍取景（带头发/肩膀），cover 填满正方形容器 */
+function cropStyle(b){
+  const W=+b.image_width||1000,H=+b.image_height||750,r=(W/H)||1;
+  let w=Math.max(+b.w||0.01,0.001),h=Math.max(+b.h||0.01,0.001);
+  let x=+b.x||0,y=+b.y||0;
+  // bbox 中心扩展 2 倍，并裁剪到图像范围内
+  const cx=x+w/2,cy=y+h/2;
+  w=Math.min(w*2,1);h=Math.min(h*2,1);
+  x=Math.max(0,cx-w/2);y=Math.max(0,cy-h/2);
+  w=Math.min(w,1-x);h=Math.min(h,1-y);
+  const wp=100*Math.max(1/w,r/h);
+  const hp=100*Math.max(1/(w*r),1/h);
+  return `width:${wp.toFixed(2)}%;height:${hp.toFixed(2)}%;left:${(-x*wp).toFixed(2)}%;top:${(-y*hp).toFixed(2)}%;`;
+}
+// 2026-09-17 改：旧行为是「图片加载失败 → 删掉整张卡片」，结果这些脸从墙面上凭空消失，
+// 看着像「照片丢了」。现在：先原地重试一次（服务端并发读图偶发超时），仍失败则占位显示「读图失败」，
+// 卡片和位置都保留 —— 用户能看出「这张读不出来」，而不是「少了几张」。
+function imgFail(el){
+  const src=el.getAttribute('src')||'';
+  if(src&&!el.dataset.retried){
+    el.dataset.retried='1';
+    setTimeout(()=>{el.src=src+(src.includes('?')?'&':'?')+'_r='+Date.now()},800);
+    return;
+  }
+  el.onerror=null;
+  const box=el.closest('.crop,.fc,.hero-av,.pick,.av')||el.parentElement;
+  if(!box)return;
+  box.classList.add('imgerr');
+  el.style.display='none';
+  if(!box.querySelector('.imgerr-tag'))box.insertAdjacentHTML('beforeend','<span class="imgerr-tag">读图失败</span>');
+}
+function imgErr(el){imgFail(el)}
+function faceErr(el){imgFail(el)}
+/* 高清人脸裁切（#74）：后端 /face_crop 按 bbox 扩展 3.6 倍裁出含头肩的方图 */
+function faceCropSrc(f){return `/face_crop?face=${encodeURIComponent(f.face_instance_id||'')}&k=2.4&size=460&v=5`}
+function faceCropStyle(){return 'position:absolute;width:100%;height:100%;object-fit:cover;left:0;top:0;max-width:none'}
+function renderPool(){
+  poolSel.clear();lastClickedIdx=-1;
+  const shots=$('shots');
+  if(!poolFaces.length){shots.className='';shots.innerHTML='<div class="empty">没有可选的未标注面孔。</div>';$('poolNum').textContent='0 张候选';return}
+  shots.className='pool';
+  shots.innerHTML=poolFaces.map((f,i)=>{
+    const dt=(f.capture_time||'').slice(0,10);
+    const simBadge=f.sim==null
+      ?'<span class="sim" style="background:#131314">待选</span>'
+      :`<span class="sim">${Math.round(f.sim*100)}% 相关</span>`;
+    return `<article class="fcard" data-idx="${i}" data-fid="${esc(f.face_instance_id)}" onclick="onCardClick(event,${i})" ondblclick="openAsset('${esc(f.asset_id)}')">
+      <div class="crop"><img loading="lazy" decoding="async" src="${faceCropSrc(f)}" style="${faceCropStyle()}" data-asset="${esc(f.asset_id)}" data-bbox='${esc(JSON.stringify(f.bbox||{}))}' onerror="faceErr(this)">${simBadge}<span class="op" onclick="event.stopPropagation();openAsset('${esc(f.asset_id)}')">打开照片</span><button class="rm face-del" onclick="event.stopPropagation();deleteFace('${esc(f.face_instance_id)}',this)" title="从库里删除这张脸">✕</button></div>
+      <div class="meta"><span>${esc(dt||'时间未知')}</span><span>${esc(f.quality_class||'')}</span></div>
+    </article>`;
+  }).join('');
+  $('poolNum').textContent=`${poolFaces.length.toLocaleString()} 张候选 · 已选 0`;
+  $('status').textContent=poolSortedBy==='quality'
+    ?`「${esc(preselectName())}」还没有已确认人脸，以下按人脸质量/大小展示全部未标注面孔，点选后确认添加即可建立识别基准。`
+    :`已加载全部 ${poolFaces.length.toLocaleString()} 张候选面孔，按与「${esc(preselectName())}」的相关性排序（越靠前越可能是同一人）。点选、Shift 连选或按住拖动框选后确认添加。`;
+  bindRectSelect($('shots'), el=>{const idx=el.dataset.idx;if(idx!=null){poolSel.add(idx);el.classList.add('sel')}});
+}
+function onCardClick(e,i){
+  if(suppressClick)return;
+  if(e.target.closest('.op'))return;
+  const el=document.querySelector(`.fcard[data-idx="${i}"]`);
+  if(!el)return;
+  if(e.shiftKey && lastClickedIdx>=0){
+    const [a,b]=[Math.min(lastClickedIdx,i),Math.max(lastClickedIdx,i)];
+    for(let k=a;k<=b;k++){poolSel.add(String(k));document.querySelector(`.fcard[data-idx="${k}"]`).classList.add('sel')}
+  }else{
+    const idx=String(i);
+    if(poolSel.has(idx)){poolSel.delete(idx);el.classList.remove('sel')}else{poolSel.add(idx);el.classList.add('sel')}
+  }
+  lastClickedIdx=i;
+  updatePoolCount();
+}
+function updatePoolCount(){
+  $('poolNum').textContent=`${poolFaces.length.toLocaleString()} 张候选 · 已选 ${poolSel.size}`;
+}
+function selectAllHigh(th=0.55){
+  poolFaces.forEach((f,i)=>{if((f.sim||0)>=th){poolSel.add(String(i));document.querySelector(`.fcard[data-idx="${i}"]`)?.classList.add('sel')}});
+  updatePoolCount();
+}
+function clearPoolSel(){
+  poolSel.clear();document.querySelectorAll('.fcard.sel').forEach(el=>el.classList.remove('sel'));updatePoolCount();
+}
+async function confirmPoolAdd(){
+  const fids=[...poolSel].map(i=>poolFaces[+i].face_instance_id);
+  if(!fids.length){toast('请先点选要添加的人脸');return}
+  if(!confirm(`确认把 ${fids.length} 张人脸添加到「${preselectName()}」？`))return;
+  try{
+    const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'assign_faces',person_id:preselectPerson,face_instance_ids:fids})});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'保存失败');
+    toast(`已添加 ${fids.length} 张脸，自动归类已在后台启动`);
+    await loadFacePool();await loadPeople();
+  }catch(e){toast(e.message)}
+}
+async function ignorePoolSelected(){
+  const fids=[...poolSel].map(i=>poolFaces[+i].face_instance_id);
+  if(!fids.length){toast('请先点选要忽略的人脸');return}
+  if(!confirm(`确认忽略选中的 ${fids.length} 张人脸（视为路人，不再推荐）？`))return;
+  try{
+    // 批量把这些人脸挂到 person_id='__ignore__' 或者新建忽略标记；后端没有 ignore_faces 动作，先逐张置 person_id 为 null 的替代方案
+    // 这里用 label_faces 把它们标为未认领即可，避免继续推荐
+    const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'label_faces',labels:fids.map(fid=>({face_instance_id:fid,person_id:null}))})});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'保存失败');
+    toast(`已忽略 ${fids.length} 张脸`);await loadFacePool();
+  }catch(e){toast(e.message)}
+}
+
+/* ---- 已确认人脸：勾选移除认领（选错人脸时纠错） ---- */
+let confirmedMode=false,confirmedFaces=[],confirmedSel=new Set();
+async function toggleConfirmed(){
+  confirmedMode=!confirmedMode;
+  const btn=$('confirmedBtn');
+  if(btn)btn.classList.toggle('on',confirmedMode);
+  renderPoolBar();
+  if(confirmedMode){await loadConfirmed()}else{loadFacePool()}
+}
+async function loadConfirmed(){
+  $('status').textContent='正在读取已确认人脸…';
+  try{
+    const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'detail',person_id:preselectPerson,confirmed_limit:500})});
+    const d=await r.json();if(!r.ok){toast(d.error||'读取失败');return}
+    confirmedFaces=d.confirmed_faces||[];
+    const btn=$('confirmedBtn');
+    if(btn)btn.innerHTML=`已确认 <b>${confirmedFaces.length}</b> 张`;
+    renderConfirmed();
+  }catch(e){$('status').textContent='读取失败：'+e.message}
+}
+function renderConfirmed(){
+  confirmedSel.clear();
+  const shots=$('shots');
+  if(!confirmedFaces.length){shots.className='';shots.innerHTML='<div class="empty">还没有已确认的人脸，回候选池点选添加。</div>';$('poolNum').textContent='已确认 0 张';return}
+  shots.className='pool confirmed-pool';
+  shots.innerHTML=confirmedFaces.map((f,i)=>{
+    const dt=(f.capture_time||'').slice(0,10);
+    return `<article class="fcard" data-idx="${i}" onclick="onConfirmedClick(event,${i})" ondblclick="openAsset('${esc(f.asset_id)}')">
+      <div class="crop"><img loading="lazy" decoding="async" src="${faceCropSrc(f)}" style="${faceCropStyle()}" data-asset="${esc(f.asset_id)}" data-bbox='${esc(JSON.stringify(f.bbox||{}))}' onerror="faceErr(this)"><span class="sim" style="background:#131314">已确认</span><span class="op" onclick="event.stopPropagation();openAsset('${esc(f.asset_id)}')">打开照片</span><button class="rm face-del" onclick="event.stopPropagation();deleteFace('${esc(f.face_instance_id)}',this)" title="从库里删除这张脸">✕</button></div>
+      <div class="meta"><span>${esc(dt||'时间未知')}</span><span>${esc(f.quality_class||'')}</span></div>
+    </article>`;
+  }).join('');
+  $('poolNum').textContent=`已确认 ${confirmedFaces.length.toLocaleString()} 张 · 已选 0`;
+  $('status').textContent=`「${esc(preselectName())}」已确认 ${confirmedFaces.length.toLocaleString()} 张人脸。点选认领错的（可 Shift 连选/拖拽框选），再点下方「移除选中认领」解除认领（回到候选池重新判定，照片原片不受影响）。`;
+  bindRectSelect($('shots'), el=>{const fid=confirmedFaces[+el.dataset.idx]?.face_instance_id;if(fid){confirmedSel.add(fid);el.classList.add('sel')}});
+}
+function onConfirmedClick(e,i){
+  if(suppressClick)return;
+  if(e.target.closest('.op'))return;
+  const el=document.querySelector(`.fcard[data-idx="${i}"]`);
+  if(!el)return;
+  const fid=confirmedFaces[i].face_instance_id;
+  if(confirmedSel.has(fid)){confirmedSel.delete(fid);el.classList.remove('sel')}else{confirmedSel.add(fid);el.classList.add('sel')}
+  $('poolNum').textContent=`已确认 ${confirmedFaces.length.toLocaleString()} 张 · 已选 ${confirmedSel.size}`;
+}
+async function unassignConfirmed(){
+  const fids=[...confirmedSel];
+  if(!fids.length){toast('请先勾选要移除的人脸');return}
+  if(!confirm(`确认移除选中的 ${fids.length} 张人脸认领？\n它们会回到候选池重新判定（自动归类按新参照重跑），照片和原片不受影响。`))return;
+  try{
+    const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'unassign_faces',face_instance_ids:fids})});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'保存失败');
+    toast(`已移除 ${fids.length} 张认领，自动归类已在后台启动`);
+    await loadConfirmed();await loadPeople();
+  }catch(e){toast(e.message)}
+}
+function backToPool(){confirmedMode=false;const btn=$('confirmedBtn');if(btn)btn.classList.remove('on');renderPoolBar();loadFacePool()}
+function clearConfirmedSel(){confirmedSel.clear();document.querySelectorAll('.confirmed-pool .fcard.sel').forEach(el=>el.classList.remove('sel'));$('poolNum').textContent=`已确认 ${confirmedFaces.length.toLocaleString()} 张 · 已选 0`}
+let suppressClick=false;  // 框选拖拽结束后抑制紧随的 click，避免误切换单张选中
+/* 通用拖拽框选：任意位置(含卡片上)按下拖动即框选，按下后位移<6px 视为单击不干扰 */
+function bindRectSelect(container, applySel){
+  let drag=null,rectEl=null,selecting=false;
+  container.onmousedown=e=>{
+    if(e.button!==0||e.target.closest('.op'))return;
+    drag={x0:e.clientX,y0:e.clientY};selecting=false;
+  };
+  container.onmousemove=e=>{
+    if(!drag)return;e.preventDefault();
+    const dx=e.clientX-drag.x0,dy=e.clientY-drag.y0;
+    if(!selecting&&Math.hypot(dx,dy)<=6)return;
+    if(!selecting){
+      selecting=true;
+      if(!rectEl){rectEl=document.createElement('div');rectEl.className='sel-rect';rectEl.style.position='fixed';rectEl.style.zIndex='9';document.body.appendChild(rectEl)}
+      rectEl.style.display='block';
+    }
+    const x1=Math.min(drag.x0,e.clientX),y1=Math.min(drag.y0,e.clientY);
+    rectEl.style.left=x1+'px';rectEl.style.top=y1+'px';
+    rectEl.style.width=Math.abs(dx)+'px';rectEl.style.height=Math.abs(dy)+'px';
+  };
+  container.onmouseup=e=>{
+    if(!drag)return;
+    const moved=Math.hypot(e.clientX-drag.x0,e.clientY-drag.y0);
+    if(selecting&&rectEl){
+      const rc=rectEl.getBoundingClientRect();
+      container.querySelectorAll('.fcard,.face').forEach(el=>{
+        const ec=el.getBoundingClientRect();
+        if(ec.right>=rc.left&&ec.left<=rc.right&&ec.bottom>=rc.top&&ec.top<=rc.bottom)applySel(el);
+      });
+      rectEl.style.display='none';
+      suppressClick=true;setTimeout(()=>suppressClick=false,120);
+    }
+    drag=null;selecting=false;
+  };
+}
+function renderPoolBar(){
+  const bar=document.createElement('div');bar.className='pool-bar';bar.id='poolBar';
+  if(confirmedMode){
+    bar.innerHTML=`<div class="status">已确认人脸 · 勾选认领错的，移除后回到候选池重新判定</div>
+    <div class="actions">
+      <button class="quiet" onclick="backToPool()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;vertical-align:-2px"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> 返回候选池</button>
+      <button class="quiet" onclick="clearConfirmedSel()">清除</button>
+      <button class="primary" onclick="unassignConfirmed()">移除选中认领</button>
+    </div>`;
+  }else{
+    bar.innerHTML=`<div class="status">已选 <b id="barCount">0</b> 张人脸</div>
+    <div class="actions">
+      <button class="quiet" onclick="selectAllPool()">全选</button>
+      <button class="quiet selhigh" onclick="selectAllHigh(0.55)">全选高相似(≥55%)</button>
+      <button class="quiet selhigh" onclick="selectAllHigh(0.45)">全选≥45%</button>
+      <button class="quiet" onclick="clearPoolSel()">清除</button>
+      <button class="quiet" onclick="ignorePoolSelected()">忽略选中</button>
+      <button class="primary" onclick="confirmPoolAdd()">确认添加</button>
+    </div>`;
+  }
+  document.body.appendChild(bar);
+}
+function selectAllPool(){
+  poolFaces.forEach((f,i)=>{poolSel.add(String(i));document.querySelector(`.fcard[data-idx="${i}"]`)?.classList.add('sel')});
+  updatePoolCount();
+}
+
+/* ---- 高频未标注簇卡片（无 person 参数时） ---- */
+async function loadFrequentUnlabeled(){
+  if(isPoolMode)return;
+  try{
+    const r=await fetch('/api/unlabeled/frequent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit:20,samples:6})});
+    const d=await r.json();if(!r.ok){toast(d.error||'读取失败');return}
+    closeDetail();
+    renderClusters(d);
+    const clusters=d.clusters||[];
+    const totalMembers=clusters.reduce((s,c)=>s+c.member_count,0);
+    $('status').textContent=`已按出现频率列出 ${clusters.length} 个未标注面孔（共 ${totalMembers} 次出现）。每张卡片是同一个人的多张脸：点多选裁切图认领、或整组确认。`;
+  }catch(e){$('status').textContent='读取失败：'+e.message}
+}
+const personOpts=()=>people.map(p=>`<option value="${esc(p.person_id)}">${esc(p.display_name||'未命名')}${p.relationship_label?'（'+esc(p.relationship_label)+'）':''}</option>`).join('');
+function cropHTML(s){
+  const dt=(s.capture_time||'').slice(0,10);
+  return `<button class="crop" data-fid="${esc(s.face_instance_id)}" onclick="toggleFace(this)" title="${dt||''} 点击选中/取消">
+    <img loading="lazy" decoding="async" src="${faceCropSrc(s)}" style="${faceCropStyle()}" data-asset="${esc(s.asset_id)}" data-bbox='${esc(JSON.stringify(s.bbox||{}))}' onerror="faceErr(this)">
+    ${dt?`<span class="dt">${esc(dt)}</span>`:''}
+    <span class="op" onclick="event.stopPropagation();openAsset('${esc(s.asset_id)}')">打开照片</span>
+    <button class="rm face-del" onclick="event.stopPropagation();deleteFace('${esc(s.face_instance_id)}',this)" title="从库里删除这张脸">✕</button>
+  </button>`;
+}
+let selFaces=new Set();
+function renderClusters(d){
+  selFaces.clear();
+  const byC={};(d.assets||[]).forEach(a=>{(byC[a.cluster_id]=byC[a.cluster_id]||[]).push(a)});
+  $('shots').className='clusters';
+  $('shots').innerHTML=(d.clusters||[]).length?(d.clusters||[]).map(c=>{
+    const items=byC[c.cluster_id]||[];
+    return `<div class="cl" data-cid="${esc(c.cluster_id)}">
+      <div class="cl-head"><b>面孔 #${c.rank}</b><span>出现 ${c.member_count} 次 · ${c.asset_count} 张照片</span></div>
+      <div class="cl-crops">${items.map(cropHTML).join('')}</div>
+      <div class="cl-foot">
+        <select class="clwho">${personOpts()}</select>
+        <button class="primary" onclick="assignSelected(this)">认领选中 <b class="nsel">0</b> 张</button>
+        <div class="wholectrl"><button onclick="confirmWhole(this)">整组都是 TA</button><button onclick="ignoreC(this)">忽略路人</button></div>
+      </div>
+      <div class="cl-hint">点裁切图选中要认领的脸（可多选，认领不是本人的跳过即可）；右上角「打开照片」可进原图精标。</div>
+    </div>`;
+  }).join(''):'<div class="empty">暂无高频未标注面孔，可用搜索框按日期/文件名找照片。</div>';
+  applyPreselect();
+}
+function toggleFace(el){
+  const fid=el.dataset.fid;
+  if(selFaces.has(fid)){selFaces.delete(fid);el.classList.remove('sel')}else{selFaces.add(fid);el.classList.add('sel')}
+  const card=el.closest('.cl');
+  if(card){const n=[...card.querySelectorAll('.crop.sel')].length;card.querySelector('.nsel').textContent=n}
+}
+async function assignSelected(btn){
+  const card=btn.closest('.cl');
+  const pid=card.querySelector('.clwho').value;
+  const fids=[...card.querySelectorAll('.crop.sel')].map(x=>x.dataset.fid);
+  if(!pid){toast('请先选择认领给哪位人物');return}
+  if(!fids.length){toast('请先点选要认领的人脸（可多选）');return}
+  btn.disabled=true;
+  try{
+    const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'assign_faces',person_id:pid,face_instance_ids:fids})});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'保存失败');
+    toast(`已认领 ${fids.length} 张脸，自动归类已在后台启动`);
+    await loadPeople();await loadFrequentUnlabeled();
+  }catch(e){toast(e.message)}finally{btn.disabled=false}
+}
+async function confirmWhole(btn){
+  const card=btn.closest('.cl');
+  const pid=card.querySelector('.clwho').value;
+  if(!pid){toast('请先选择确认给哪位人物');return}
+  if(!confirm('整组确认会把该组的全部人脸都归给此人，确定？'))return;
+  try{
+    const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'assign_cluster',person_id:pid,cluster_id:card.dataset.cid})});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'保存失败');
+    toast('整组已确认，自动归类已在后台启动');
+    await loadPeople();await loadFrequentUnlabeled();
+  }catch(e){toast(e.message)}
+}
+async function ignoreC(btn){
+  const card=btn.closest('.cl');
+  if(!confirm('确认忽略这组面孔（视为路人，不再推荐）？'))return;
+  try{
+    const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'ignore_cluster',cluster_id:card.dataset.cid})});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'保存失败');
+    toast('已忽略该组');await loadFrequentUnlabeled();
+  }catch(e){toast(e.message)}
+}
+function renderFaceGrid(groups){
+  $('shots').className='face-grid';
+  let html='';
+  const allFaces=[];
+  for(const {asset,faces} of groups){
+    for(const f of faces){
+      allFaces.push(Object.assign({},f,{
+        asset_id:f.asset_id||asset.asset_id,
+        capture_time:f.capture_time||asset.capture_time,
+        filename:f.filename||asset.filename
+      }));
+    }
+  }
+  for(const f of allFaces){
+    const fid=f.face_instance_id;
+    const cur=f.person_id||'';
+    const personName=f.person_name||(cur?'已标注':'未认领');
+    const dt=(f.capture_time||'').slice(0,10)||'时间未知';
+    html+=`<div class="face" data-fid="${esc(fid)}">
+      <div class="crop"><img loading="lazy" decoding="async" src="${faceCropSrc(f)}" style="${faceCropStyle()}" onerror="faceErr(this)"><span class="op" onclick="event.stopPropagation();openAsset('${esc(f.asset_id)}')">打开照片</span></div>
+      <div class="meta"><span>${esc(personName)}</span><span>${esc(dt)}</span></div>
+      <select class="who" data-fid="${esc(fid)}" onchange="onGridWho(this)">
+        <option value="${SKIP}">— 不改 —</option>
+        <option value="" ${!cur?'selected':''}>未认领</option>
+        ${people.map(p=>`<option value="${esc(p.person_id)}" ${cur===p.person_id?'selected':''}>${esc(p.display_name||'未命名')}</option>`).join('')}
+        <option value="${NEW}">+ 新建人物…</option>
+      </select>
+      <div class="np" style="display:none"><input class="nname" placeholder="姓名（必填）"><input class="nrel" placeholder="关系，如：表哥"></div>
+    </div>`;
+  }
+  $('shots').innerHTML=html || '<div class="empty">暂无未标注人脸</div>';
+  gridModified=new Set();
+  renderGridSaveBar();
+  return allFaces.length;
+}
+async function searchAssets(){
+  const q=$('q').value.trim();
+  if(!q){await loadAllUnlabeled();return}
+  $('status').textContent='正在按日期/关键词搜人脸…';
+  const r=await fetch('/api/asset/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q,include_all:true})});
+  const d=await r.json();if(!r.ok){toast(d.error||'搜索失败');return}
+  closeDetail();selFaces.clear();
+  const photos=d.assets||[];
+  const groups=await Promise.all(photos.map(async a=>{
+    try{
+      const fr=await fetch('/api/asset/faces',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({asset_id:a.asset_id})});
+      const fd=await fr.json();
+      return {asset:a, faces:fd.faces||[]};
+    }catch{return {asset:a, faces:[]}}
+  }));
+  const total=renderFaceGrid(groups);
+  $('status').textContent=total
+    ?`找到 ${photos.length} 张照片、共 ${total} 张人脸；逐个选人物后点底部「保存全部」`
+    :`该日期/关键词下没有照片或没人脸，试试其他日期或关键词`;
+}
+async function loadAllUnlabeled(){
+  $('status').textContent='正在读取所有未标注人脸…';
+  const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const d=await r.json();if(!r.ok){toast(d.error||'读取失败');return}
+  closeDetail();selFaces.clear();
+  const faces=d.unresolved_faces||[];
+  const byAsset={};
+  for(const f of faces){
+    const aid=f.asset_id||'unknown';
+    if(!byAsset[aid]){
+      byAsset[aid]={asset:{asset_id:aid,capture_time:f.capture_time,filename:f.filename||'(未知文件名)'},faces:[]};
+    }
+    byAsset[aid].faces.push(f);
+  }
+  const groups=Object.values(byAsset);
+  const total=renderFaceGrid(groups);
+  const photoCount=groups.length;
+  $('status').textContent=total
+    ?`共有 ${photoCount} 张照片包含未标注人脸，共 ${total} 张脸；逐个选人物后点底部「保存全部」`
+    :'目前没有未标注人脸';
+}
+function onGridWho(sel){
+  const fid=sel.dataset.fid;
+  const v=sel.value;
+  const np=sel.parentElement.querySelector('.np');
+  if(v===NEW){
+    if(!np.style.display||np.style.display==='none'){
+      np.style.display='grid';
+      const inp=np.querySelector('.nname');
+      if(inp)inp.focus();
+    }
+    gridModified.add(fid);sel.classList.add('mod')
+  }else{
+    if(np)np.style.display='none';
+    if(v===SKIP){gridModified.delete(fid);sel.classList.remove('mod')}
+    else{gridModified.add(fid);sel.classList.add('mod')}
+  }
+  updateGridSaveBar();
+}
+function renderGridSaveBar(){
+  let bar=document.getElementById('gridSaveBar');
+  if(bar)bar.remove();
+  bar=document.createElement('div');
+  bar.id='gridSaveBar';
+  bar.className='pool-bar';
+  bar.innerHTML=`<div class="status">已修改 <b id="gridModCount">0</b> 张人脸 · 仅这些会写入</div>
+    <div class="actions">
+      <button class="quiet" onclick="revertGridMod()">撤销改动</button>
+      <button class="primary" onclick="saveGridLabels()">保存全部</button>
+    </div>`;
+  document.body.appendChild(bar);
+}
+function updateGridSaveBar(){
+  const c=document.getElementById('gridModCount');
+  if(c)c.textContent=gridModified.size;
+}
+function revertGridMod(){
+  document.querySelectorAll('#shots .who.mod').forEach(s=>{s.classList.remove('mod')});
+  gridModified.clear();updateGridSaveBar();
+}
+async function saveGridLabels(){
+  if(!gridModified.size){toast('没有改动');return}
+  const labels=[];
+  let missingName=false;let firstMissing=null;
+  document.querySelectorAll('#shots .face').forEach(card=>{
+    const sel=card.querySelector('.who');
+    if(!sel||!gridModified.has(sel.dataset.fid))return;
+    const v=sel.value;
+    if(v===SKIP)return;
+    if(v===NEW){
+      const name=card.querySelector('.nname')?.value.trim();
+      if(!name){missingName=true;if(!firstMissing)firstMissing=card;return}
+      labels.push({face_instance_id:sel.dataset.fid,person:{display_name:name,relationship_label:card.querySelector('.nrel')?.value.trim()||''}});
+    }else{
+      labels.push({face_instance_id:sel.dataset.fid,person_id:v||null});
+    }
+  });
+  if(missingName){toast('新建人物必须填写姓名');firstMissing?.querySelector('.nname')?.focus();return}
+  if(!labels.length){toast('改动项里没有可写入的标注');return}
+  if(!confirm(`确认保存 ${labels.length} 张人脸的标注？自动归类将在后台启动`))return;
+  try{
+    const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'label_faces',labels})});
+    const dd=await r.json();if(!r.ok)throw Error(dd.error||'保存失败');
+    toast(`已保存 ${labels.length} 张人脸，自动归类已在后台启动`);
+    gridModified.clear();
+    document.getElementById('gridSaveBar')?.remove();
+    // 刷新当前网格：重新跑搜索以便反映新状态
+    searchAssets();
+    await loadPeople();
+  }catch(e){toast(e.message)}
+}
+async function openAsset(aid){
+  const r=await fetch('/api/asset/faces',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({asset_id:aid})});
+  const d=await r.json();if(!r.ok){toast(d.error||'读取失败');return}
+  curAsset=aid;curAssetMeta=d.asset||null;curFaces=d.faces;newFaces=[];
+  if(isPoolMode){$('poolBanner').style.display='none';$('poolBar')&&($('poolBar').style.display='none')}
+  $('shots').innerHTML='';$('detail').style.display='';
+  const photoImg=$('photoImg');photoImg.onerror=function(){this.onerror=null;this.closest('.detail,.photo,div')?.remove()};photoImg.src=`/thumb?asset=${encodeURIComponent(aid)}&edge=480`;
+  $('photoMeta').textContent=`${d.asset.capture_time?d.asset.capture_time.slice(0,10):'时间未知'} · ${d.faces.length} 张已检测人脸 · 已标注 ${d.faces.filter(f=>f.person_name).length} 张`;
+  renderBoxes();renderFaces();applyPreselect();
+  $('status').textContent='已检测的脸直接选人物；漏掉的脸在照片上按住拖动框选。';
+}
+function renderBoxes(){
+  $('boxes').innerHTML=curFaces.map((f,i)=>`<div class="fb" data-i="${i}" style="left:${f.bbox.x*100}%;top:${f.bbox.y*100}%;width:${f.bbox.w*100}%;height:${f.bbox.h*100}%"><i>${esc(f.person_name||'未认领')}</i></div>`).join('')
+    + newFaces.map((f,i)=>`<div class="fb isnew" style="left:${f.bbox.x*100}%;top:${f.bbox.y*100}%;width:${f.bbox.w*100}%;height:${f.bbox.h*100}%"><i>新框 #${i+1}</i></div>`).join('');
+}
+function applyPreselect(){
+  if(!preselectPerson)return;
+  document.querySelectorAll('.who, .clwho').forEach(sel=>{
+    if(sel.value==='' || sel.value===SKIP){
+      const opt=[...sel.options].find(o=>o.value===preselectPerson);
+      if(opt){sel.value=preselectPerson;onWho(sel);}
+    }
+  });
+}
+function personOptions(cur){
+  const opts=people.map(p=>`<option value="${esc(p.person_id)}" ${cur===p.person_id?'selected':''}>${esc(p.display_name||'未命名')}${p.relationship_label?'（'+esc(p.relationship_label)+'）':''}</option>`).join('');
+  return `<select class="who" onchange="onWho(this)"><option value="${SKIP}">— 不改 —</option><option value="" ${!cur?'selected':''}>未认领</option>${opts}<option value="${NEW}">+ 新建人物…</option></select>`;
+}
+function renderFaces(){
+  const aid=curAsset;
+  const newCards=newFaces.map((f,i)=>`<div class="face newface" data-new="${i}">
+    <div class="crop" style="aspect-ratio:${f.bbox.image_width||4}/${f.bbox.image_height||3}"><button class="rm" onclick="removeNew(${i})" title="删除此框">✕</button><img loading="lazy" decoding="async" src="/thumb?asset=${encodeURIComponent(aid)}&edge=480" onerror="imgErr(this)"><i class="box" style="border-color:var(--accent);left:${f.bbox.x*100}%;top:${f.bbox.y*100}%;width:${f.bbox.w*100}%;height:${f.bbox.h*100}%"></i></div>
+    <div class="meta"><span style="color:var(--accent)">新框选的脸</span><span>需指定人物</span></div>
+    <select class="who" onchange="onWho(this)"><option value="" selected>— 选人物 —</option>${people.map(p=>`<option value="${esc(p.person_id)}">${esc(p.display_name||'未命名')}${p.relationship_label?'（'+esc(p.relationship_label)+'）':''}</option>`).join('')}<option value="${NEW}">+ 新建人物…</option></select>
+    <div class="np" style="display:none"><input class="nname" placeholder="姓名（必填）"><input class="nrel" placeholder="关系，如：表哥"></div>
+  </div>`).join('');
+  const cards=curFaces.map(f=>{const b=f.bbox;return `<div class="face" data-fid="${esc(f.face_instance_id)}">
+    <div class="crop" style="aspect-ratio:${b.image_width}/${b.image_height}"><img loading="lazy" decoding="async" src="/thumb?asset=${encodeURIComponent(aid)}&edge=480" onerror="imgErr(this)"><i class="box" style="left:${b.x*100}%;top:${b.y*100}%;width:${b.w*100}%;height:${b.h*100}%"></i><button class="rm face-del" onclick="event.stopPropagation();deleteFace('${esc(f.face_instance_id)}',this)" title="从库里删除这张脸">✕</button></div>
+    <div class="meta"><span>${f.person_name?('已标注：'+esc(f.person_name)):'未认领'}</span><span>${esc(f.quality_class||'')}</span></div>
+    ${personOptions(f.person_id)}
+    <div class="np" style="display:none"><input class="nname" placeholder="姓名（必填）"><input class="nrel" placeholder="关系，如：表哥"></div>
+  </div>`}).join('');
+  $('faces').innerHTML=newCards+cards;
+}
+function onWho(sel){const np=sel.parentElement.querySelector('.np');np.style.display=sel.value===NEW?'grid':'none'}
+function removeNew(i){newFaces.splice(i,1);renderBoxes();renderFaces()}
+/* ---- 删除人脸实例（从 face_instance_v0 永久移除，不动原片和 person） ---- */
+async function deleteFace(fid,btn){
+  if(!fid)return;
+  if(!confirm('确认从库里删除这张脸？\n会从人脸库移除，原片和人物都不会受影响。'))return;
+  try{
+    const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete_faces',face_instance_ids:[fid]})});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'删除失败');
+    toast('已删除 1 张脸');
+    // 本地数组同步移除（pool/confirmed/curFaces）
+    for(const arr of [poolFaces,confirmedFaces,curFaces]){
+      if(!Array.isArray(arr))continue;
+      const i=arr.findIndex(f=>f.face_instance_id===fid);
+      if(i>=0){arr.splice(i,1);break}
+    }
+    // DOM：触发该按钮的卡片
+    const card=btn?.closest('.fcard,.crop,.face');
+    if(card)card.remove();
+    // 照片详情：刷新脸框 + 顶部计数
+    if($('detail')&&$('detail').style.display!=='none'&&curAsset){
+      renderBoxes();renderFaces();
+      $('photoMeta').textContent=`${curAssetMeta&&curAssetMeta.capture_time?String(curAssetMeta.capture_time).slice(0,10):'时间未知'} · ${curFaces.length} 张已检测人脸 · 已标注 ${curFaces.filter(f=>f.person_name).length} 张`;
+    }
+    // 池/确认模式：刷新计数
+    else if(isPoolMode){
+      if(confirmedMode){const n=confirmedFaces.length;const b=$('confirmedBtn');if(b)b.innerHTML=`已确认 <b>${n}</b> 张`;$('poolNum').textContent=`已确认 ${n.toLocaleString()} 张 · 已选 0`}
+      else updatePoolCount();
+    }
+    // 高频簇：清掉对应 fid 的 .crop
+    else{
+      document.querySelectorAll(`.cl-crops .crop[data-fid="${cssEscAttr(fid)}"]`).forEach(c=>c.remove());
+    }
+  }catch(e){toast('删除失败：'+e.message)}
+}
+const cssEscAttr=s=>String(s).replace(/\\/g,'\\\\').replace(/"/g,'\\"');
+function closeDetail(){$('detail').style.display='none';$('faces').innerHTML='';curAsset=null;if(isPoolMode){$('poolBanner').style.display='';$('poolBar')&&($('poolBar').style.display='');if(confirmedMode){renderConfirmed()}else{loadFacePool()}}}
+/* ---- 照片上拖框选脸 ---- */
+let drag=null;
+const stage=$('stage'),selRect=$('selRect'),photoImg=$('photoImg');
+stage.addEventListener('pointerdown',e=>{
+  if(!curAsset)return;
+  if(!photoImg.naturalWidth)return;
+  const r=photoImg.getBoundingClientRect();
+  if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)return;
+  stage.setPointerCapture(e.pointerId);
+  drag={x0:(e.clientX-r.left)/r.width,y0:(e.clientY-r.top)/r.height};
+  selRect.style.display='block';moveSel((e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height);
+});
+stage.addEventListener('pointermove',e=>{
+  if(!drag)return;
+  const r=photoImg.getBoundingClientRect();
+  moveSel(Math.min(1,Math.max(0,(e.clientX-r.left)/r.width)),Math.min(1,Math.max(0,(e.clientY-r.top)/r.height)));
+});
+function moveSel(x,y){
+  const x1=Math.min(drag.x0,x),y1=Math.min(drag.y0,y);
+  selRect.style.left=x1*100+'%';selRect.style.top=y1*100+'%';
+  selRect.style.width=Math.abs(x-drag.x0)*100+'%';selRect.style.height=Math.abs(y-drag.y0)*100+'%';
+}
+stage.addEventListener('pointerup',e=>{
+  if(!drag)return;
+  const r=photoImg.getBoundingClientRect();
+  const x=Math.min(1,Math.max(0,(e.clientX-r.left)/r.width)),y=Math.min(1,Math.max(0,(e.clientY-r.top)/r.height));
+  const b={x:Math.min(drag.x0,x),y:Math.min(drag.y0,y),w:Math.abs(x-drag.x0),h:Math.abs(y-drag.y0),image_width:photoImg.naturalWidth,image_height:photoImg.naturalHeight};
+  drag=null;selRect.style.display='none';
+  if(b.w<0.02||b.h<0.02){return}
+  if(newFaces.length+curFaces.length>=40){toast('一张照片最多 40 张脸');return}
+  newFaces.push({bbox:b});
+  renderBoxes();renderFaces();
+  const cards=$('faces').querySelectorAll('.newface');
+  cards[cards.length-1]?.querySelector('.who')?.focus();
+  toast('已框选一张脸，请在下方为它选择人物');
+});
+stage.addEventListener('pointercancel',()=>{drag=null;selRect.style.display='none'});
+/* ---- 保存 ---- */
+async function saveLabels(){
+  const labels=[];let skipped=0;
+  for(const card of document.querySelectorAll('#faces .face:not(.newface)')){
+    const sel=card.querySelector('.who');
+    if(sel.value===SKIP){skipped++;continue}
+    if(sel.value===NEW){
+      const name=card.querySelector('.nname').value.trim();
+      if(!name){toast('新建人物必须填写姓名');card.querySelector('.nname').focus();return}
+      labels.push({face_instance_id:card.dataset.fid,person:{display_name:name,relationship_label:card.querySelector('.nrel').value.trim()}})
+    }else{
+      labels.push({face_instance_id:card.dataset.fid,person_id:sel.value||null})
+    }
+  }
+  const nf=[];
+  for(const card of document.querySelectorAll('#faces .newface')){
+    const sel=card.querySelector('.who');
+    const idx=+card.dataset.new,item={asset_id:curAsset,bbox:newFaces[idx].bbox};
+    if(!sel.value||sel.value===SKIP){toast('新框选的脸必须指定人物（或删掉该框）');sel.focus();return}
+    if(sel.value===NEW){
+      const name=card.querySelector('.nname').value.trim();
+      if(!name){toast('新建人物必须填写姓名');card.querySelector('.nname').focus();return}
+      item.person={display_name:name,relationship_label:card.querySelector('.nrel').value.trim()}
+    }else{item.person_id=sel.value}
+    nf.push(item);
+  }
+  if(!labels.length&&!nf.length){toast('没有需要保存的标注');return}
+  $('saveLabels').disabled=true;$('saveHint').textContent='保存中…';
+  try{
+    const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'label_faces',labels,new_faces:nf})});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'保存失败');
+    const lr=d.label_result||{};const aa=d.auto_assign||{};const nfres=lr.new_faces||{};
+    let msg=`已标注 ${lr.labeled||0} 张脸`;
+    if(nfres.created)msg+=`，新框建脸 ${nfres.created} 张`;
+    if(lr.created_persons&&lr.created_persons.length)msg+='，新建人物：'+lr.created_persons.join('、');
+    msg+='。'+(aa.already_running?'检测任务进行中，收尾时自动归类':'自动归类已在后台启动');
+    toast(msg);
+    await loadPeople();await openAsset(curAsset);
+  }catch(e){toast(e.message)}finally{$('saveLabels').disabled=false;$('saveHint').textContent=''}
+}
+async function loadPool(){
+  const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const payload=await r.json();people=payload.people||[];
+  $('person').innerHTML=people.map(p=>`<option value="${esc(p.person_id)}">${esc(p.display_name)}</option>`).join('');
+  $('grid').innerHTML=(payload.unresolved_faces||[]).map(f=>{const b=f.bbox;return `<button class="face" data-id="${esc(f.face_instance_id)}" style="aspect-ratio:${b.image_width}/${b.image_height};position:relative;background:#ebebe9;padding:0;border:3px solid transparent;border-radius:10px;overflow:hidden;cursor:pointer"><img loading="lazy" decoding="async" src="/thumb?asset=${encodeURIComponent(f.asset_id)}&edge=480" onerror="imgErr(this)"><i class="box" style="position:absolute;border:2px solid #fff;box-shadow:0 0 0 2px #1118;pointer-events:none;left:${b.x*100}%;top:${b.y*100}%;width:${b.w*100}%;height:${b.h*100}%"></i><span class="badge">${esc((f.capture_time||'时间待确认').slice(0,10))}</span></button>`}).join('');
+  $('status').textContent=`待认领 ${Number(payload.unresolved_face_count).toLocaleString()} 张，当前显示质量较高的 ${payload.unresolved_faces.length} 张。可点选、Shift 连选、按住拖动框选或「全选」批量勾选，认领后进入参照库并自动归类。`;
+  bindRectSelect($('grid'), el=>{const id=el.dataset.id;if(!id)return;selected.add(id);el.style.borderColor='var(--accent)'});
+  $('poolTip').textContent=`已选 ${selected.size}`;
+}
+$('grid').onclick=e=>{const card=e.target.closest('.face');if(!card)return;if(suppressClick)return;selected.has(card.dataset.id)?selected.delete(card.dataset.id):selected.add(card.dataset.id);card.style.borderColor=selected.has(card.dataset.id)?'var(--accent)':'transparent';$('status').textContent=`已选 ${selected.size} 张人脸`;$('poolTip').textContent=`已选 ${selected.size}`};
+function clearSel(){selected.clear();document.querySelectorAll('#grid .face').forEach(x=>x.style.borderColor='transparent');$('poolTip').textContent='已选 0'}
+function selectAllGrid(){document.querySelectorAll('#grid .face').forEach(el=>{const id=el.dataset.id;if(!id)return;selected.add(id);el.style.borderColor='var(--accent)'});$('status').textContent=`已选 ${selected.size} 张人脸`;$('poolTip').textContent=`已选 ${selected.size}`}
+async function savePool(){
+  if(!selected.size)return alert('请先点选人脸');
+  const r=await fetch('/api/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'assign_faces',person_id:$('person').value,face_instance_ids:[...selected]})});
+  const d=await r.json();if(!r.ok){alert(d.error||'保存失败');return}
+  toast(`已认领 ${selected.size} 张人脸，自动归类已在后台启动`);
+  selected.clear();await loadPeople();await loadPool();
+}
+/* ---- 从照片/视频新建人脸 ---- */
+let uploadSession=null, selectedUploadFace=-1;
+function openCreateFaceModal(){
+  $('createFaceModal').classList.add('on');
+  document.getElementById('newFacePerson').innerHTML='<option value="">— 新建人物 —</option>'+people.map(p=>`<option value="${esc(p.person_id)}">${esc(p.display_name)}</option>`).join('');
+  resetUploadUI();
+}
+function closeCreateFaceModal(){$('createFaceModal').classList.remove('on');resetUploadUI()}
+function resetUploadUI(){
+  uploadSession=null;selectedUploadFace=-1;
+  $('uploadInput').value='';
+  $('uploadHint').innerHTML='点击选择或拖拽照片/视频到此处<br><span style="font-size:12px;color:var(--muted)">支持 jpg/png/heic/mp4/mov 等格式</span>';
+  $('uploadFaces').style.display='none';$('uploadFaces').innerHTML='';
+  $('newFaceForm').style.display='none';
+  $('newFaceName').value='';$('newFacePerson').value='';
+  $('uploadStatus').textContent='';
+  $('confirmCreateBtn').disabled=true;
+}
+async function onUploadFile(input){
+  const file=input.files[0];if(!file)return;
+  if(file.size>200*1024*1024){toast('文件过大，请选 200MB 以内');return}
+  $('uploadStatus').textContent='正在上传并检测人脸…';
+  const fd=new FormData();fd.append('file',file);
+  try{
+    const r=await fetch('/api/face/upload-preview',{method:'POST',body:fd});
+    const d=await r.json();
+    if(!r.ok||d.error){toast(d.error||'上传失败');$('uploadStatus').textContent='';return}
+    uploadSession=d;
+    selectedUploadFace=-1;
+    renderUploadFaces(d.faces);
+    $('uploadStatus').textContent=`检测到 ${d.faces.length} 张人脸，点击选择一张`;
+    $('newFaceForm').style.display='grid';
+  }catch(e){toast('上传异常：'+e.message);$('uploadStatus').textContent=''}
+}
+function renderUploadFaces(faces){
+  const box=$('uploadFaces');box.style.display='grid';
+  if(!faces.length){box.innerHTML='<div class="status">未检测到人脸，请换一张正面清晰的照片</div>';return}
+  box.innerHTML=faces.map((f,i)=>`<div class="uface ${selectedUploadFace===i?'sel':''}" data-idx="${i}" onclick="selectUploadFace(${i})"><img decoding="async" src="${f.preview||''}" onerror="this.style.background='#ebebe9'"><span>人脸 ${i+1}</span></div>`).join('');
+}
+function selectUploadFace(i){
+  selectedUploadFace=i;
+  document.querySelectorAll('#uploadFaces .uface').forEach((el,idx)=>el.classList.toggle('sel',idx===i));
+  $('confirmCreateBtn').disabled=false;
+}
+async function confirmCreateFace(){
+  if(!uploadSession||selectedUploadFace<0)return;
+  const personId=$('newFacePerson').value;
+  const name=$('newFaceName').value.trim();
+  if(!personId&&!name){toast('请输入新人物姓名或选择现有人物');return}
+  $('uploadStatus').textContent='正在保存…';
+  try{
+    const r=await fetch('/api/face/create-from-upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({upload_id:uploadSession.upload_id,face_index:selectedUploadFace,display_name:name,person_id:personId})});
+    const d=await r.json();
+    if(!r.ok||d.error){toast(d.error||'创建失败');$('uploadStatus').textContent='';return}
+    toast('人物创建成功');
+    closeCreateFaceModal();
+    await loadPeople();
+    if(!isPoolMode)await loadAllUnlabeled();
+  }catch(e){toast('创建异常：'+e.message);$('uploadStatus').textContent=''}
+}
+/* 拖拽上传 */
+const drop=$('uploadDrop');
+['dragenter','dragover'].forEach(ev=>{drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('dragover')})});
+['dragleave','drop'].forEach(ev=>{drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('dragover')})});
+drop.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f){const input=$('uploadInput');const dt=new DataTransfer();dt.items.add(f);input.files=dt.files;onUploadFile(input)}});
+/* ESC 关闭「新建人脸」弹窗 */
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Escape')return;
+  if($('createFaceModal').classList.contains('on')){e.preventDefault();closeCreateFaceModal()}
+});
+
+loadPeople().then(()=>{
+  if(isPoolMode){renderPoolBar();loadFacePool()}else{loadAllUnlabeled()}
+}).catch(e=>$('status').textContent='读取失败：'+e.message);
+</script><script src="offline-guard.js"></script>
+</body></html>

@@ -1,0 +1,83 @@
+/* ============================================================
+   家庭回忆相册 — 全站设计令牌（Beta 0.5 现代极简风）
+   参考色板（严格六色）：
+     电蓝 #2f31f5 · 黄绿 #dbf059 · 中灰 #797979
+     铂灰 #ebebe9 · 纯黑 #131314 · 纯白 #ffffff
+   引入方式：各页 <head> 中、自身 <style> 之后加
+     <link rel="stylesheet" href="/theme.css?v=06">
+   原理：重声明各页 :root 同名变量（后来者胜）+ 提供全局基础层
+   ============================================================ */
+
+:root{
+  /* ---- 色板（六色体系）---- */
+  --bg:        #ffffff;   /* 纯白底 */
+  --bg-deep:   #ebebe9;   /* 铂灰分区（侧栏/次级面板） */
+  --card:      #ffffff;   /* 卡片白 */
+  --ink:       #131314;   /* 纯黑主文字 */
+  --muted:     #797979;   /* 中灰次级文字 */
+  --line:      #ebebe9;   /* 铂灰描边 */
+  --accent:    #2f31f5;   /* 电蓝主色 */
+  --accent-2:  #dbf059;   /* 黄绿高亮（配黑字使用） */
+  --accent-soft:#2f31f514;
+  --danger:    #e5484d;
+  --ok:        #30a46c;
+
+  /* ---- 圆角 ---- */
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 26px;
+
+  /* ---- 中性阴影 ---- */
+  --shadow-sm: 0 1px 2px rgba(19,19,20,.05), 0 2px 8px rgba(19,19,20,.06);
+  --shadow-md: 0 2px 6px rgba(19,19,20,.07), 0 10px 28px rgba(19,19,20,.10);
+  --shadow-lg: 0 6px 16px rgba(19,19,20,.10), 0 20px 48px rgba(19,19,20,.14);
+
+  /* ---- 间距（4 基准）---- */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 24px; --sp-6: 32px; --sp-7: 48px;
+
+  /* ---- 字阶（全站统一层级）----
+     xs 12 辅助注释 / sm 13 次级说明 / md 14 正文基准 / lg 16 小标题
+     xl 20 页面标题 / 2xl 26 大标题 / display 32 品牌字 */
+  --fs-xs: 12px; --fs-sm: 13px; --fs-md: 14px; --fs-lg: 16px;
+  --fs-xl: 20px; --fs-2xl: 26px; --fs-display: 32px;
+  --font: -apple-system, "PingFang SC", "SF Pro Text", "Segoe UI", "Microsoft YaHei", sans-serif;
+  --lh: 1.6;
+}
+
+/* ---- 全局基础层（低特异性，不破坏页面自有 class） ---- */
+html{ -webkit-text-size-adjust:100%; }
+body{
+  font-family: var(--font);
+  line-height: var(--lh);
+  color: var(--ink);
+  background: var(--bg);
+}
+::selection{ background: rgba(47,49,245,.16); }
+
+/* 标题层级统一：黑体加粗、微收字距 */
+h1,h2,h3{ font-weight:700; letter-spacing:-.01em; color:var(--ink); }
+
+/* 滚动条中性化 */
+::-webkit-scrollbar{ width:10px; height:10px; }
+::-webkit-scrollbar-track{ background:transparent; }
+::-webkit-scrollbar-thumb{ background:rgba(19,19,20,.18); border-radius:8px; border:2px solid transparent; background-clip:content-box; }
+::-webkit-scrollbar-thumb:hover{ background:rgba(19,19,20,.34); background-clip:content-box; border:2px solid transparent; }
+
+/* 表单元素统一（低特异性兜底） */
+input[type=text], input[type=password], input[type=number], input[type=date], textarea, select{
+  border-radius: var(--r-sm);
+  border-color: var(--line);
+}
+input:focus, textarea:focus, select:focus{
+  outline: 2px solid rgba(47,49,245,.30);
+  outline-offset: 1px;
+}
+button{ font-family: var(--font); }
+
+/* 图片默认柔和（页面可自行覆盖） */
+img{ -webkit-user-drag: none; }
+
+/* 链接默认色（页面自有样式优先） */
+a{ color: var(--accent); }
