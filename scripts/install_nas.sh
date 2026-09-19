@@ -137,8 +137,8 @@ services:
     environment:
       - PORT=8788
       - FF_DATA_DIR=/data
-      - FF_FACE_BACKEND=adaface
-      - FF_ADAFACE_DIR=/models/adaface
+      - FF_FACE_BACKEND=opencv
+      - FF_OPENCV_MODEL_DIR=/models
       - FF_SIGLIP2_DIR=/models/siglip2-base-patch16-224
       - FF_BIND=0.0.0.0
       - MEDIA_ROOTS=/photos
@@ -146,9 +146,9 @@ services:
       - $INSTALL_DIR/data:/data
       - $PHOTOS_MOUNT:/photos
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8788/', timeout=5)\" || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import http.client; c=http.client.HTTPConnection('127.0.0.1', 8788, timeout=12); c.request('GET','/'); r=c.getresponse(); r.read(); exit(0 if r.status<500 else 1)\""]
       interval: 60s
-      timeout: 10s
+      timeout: 15s
       retries: 3
 EOF
 
@@ -160,8 +160,8 @@ else
   # 无 compose 的老环境：等价 docker run
   "$DOCKER" rm -f "$CNAME" >/dev/null 2>&1 || true
   "$DOCKER" run -d --name "$CNAME" --restart unless-stopped \
-    -p "$PORT:8788" -e PORT=8788 -e FF_DATA_DIR=/data -e FF_FACE_BACKEND=adaface \
-    -e FF_ADAFACE_DIR=/models/adaface \
+    -p "$PORT:8788" -e PORT=8788 -e FF_DATA_DIR=/data -e FF_FACE_BACKEND=opencv \
+    -e FF_OPENCV_MODEL_DIR=/models \
     -e FF_SIGLIP2_DIR=/models/siglip2-base-patch16-224 \
     -e FF_BIND=0.0.0.0 -e MEDIA_ROOTS=/photos \
     -v "$INSTALL_DIR/data:/data" -v "$PHOTOS_MOUNT:/photos" \
