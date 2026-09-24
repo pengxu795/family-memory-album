@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.1"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.2"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -95,6 +95,8 @@ WORKER_SCRIPTS = {k: str(ROOT / v) for k, v in {
     "privacy": "privacy_auto_scan.py",
     # 2026-09-16 新增：导入后增量富化（精确去重/画质/相似分组/择优/语义过滤）
     "enrich": "enrich.py",
+    # 2026-09-24 新增：Log 视频播放转码（D-Log 4K HEVC 10bit → H.264 8bit）
+    "videolc": "transcode_log_videos.py",
 }.items()}
 
 # 全局后台重任务互斥锁：autoscan / vlm-describe / privacy-scan 任意时刻只允许
@@ -1751,6 +1753,80 @@ def init_start_scan(path):
                 INIT_SCAN["progress"] = {"status": "error", "message": str(exc)}
 
     threading.Thread(target=_run, daemon=True, name="init-scan").start()
+
+
+# ============ Log 视频转码自动守护（2026-09-24）============
+# D-Log 原片是 4K HEVC 10bit，Chrome 解不动，必须转成 H.264 8bit 缓存才能播。
+# 全量转码要跑好几个小时，而容器重启 / 在线升级 / OOM 都会把它杀掉，
+# 所以常驻一个看门狗：有活儿且没在跑就自动续上，不需要人工记着拉起。
+_VIDEO_LC_SCRIPT = ROOT / "transcode_log_videos.py"
+
+
+def videolc_pending_count():
+    """待转码条数：is_log=1 的视频里还没有产物（或产物 0 字节）的。"""
+    try:
+        con = sqlite3.connect(DB, timeout=10)
+        con.row_factory = sqlite3.Row
+        con.execute("PRAGMA busy_timeout=10000")
+        rows = con.execute("""SELECT lc.asset_id FROM asset_log_color_v0 lc
+                              JOIN media_asset ma ON ma.asset_id = lc.asset_id
+                              WHERE lc.is_log = 1 AND ma.media_type = 'video'""").fetchall()
+        con.close()
+    except Exception:
+        return 0            # 表还没迁 / 库忙 → 当没活儿，下轮再看
+    n = 0
+    for r in rows:
+        f = VIDEO_LC_DIR / (str(r["asset_id"])[6:] + "_lc.mp4")
+        try:
+            if f.exists() and f.stat().st_size > 0:
+                continue
+        except OSError:
+            pass
+        n += 1
+    return n
+
+
+def videolc_run(trigger="manual"):
+    """拉起转码（幂等：已在跑 / 无待办则不重复）。"""
+    if trigger == "autorun" and get_setting("videolc_autorun_enabled", "1") != "1":
+        return {"ok": True, "skipped": "videolc_autorun_enabled=0"}
+    pend = videolc_pending_count()
+    if pend <= 0:
+        return {"ok": True, "skipped": "没有待转码的 Log 视频", "pending": 0}
+    r = _spawn_worker("videolc", _VIDEO_LC_SCRIPT, "videolc.log",
+                      r"transcode_log_videos\.py")
+    r["pending"] = pend
+    if r.get("started"):
+        set_setting("videolc_last_run_at", now_iso())
+        set_setting("videolc_last_trigger", trigger)
+    return r
+
+
+def videolc_status():
+    """转码进度（界面 / 排障用）。"""
+    return {"enabled": get_setting("videolc_autorun_enabled", "1") == "1",
+            "pending": videolc_pending_count(),
+            "running": bool(_pgrep(r"transcode_log_videos\.py")),
+            "last_run_at": get_setting("videolc_last_run_at", ""),
+            "last_trigger": get_setting("videolc_last_trigger", "")}
+
+
+def _videolc_watchdog():
+    """看门狗：每 10 分钟看一次，没在跑且有活儿就自动续上。
+
+    首轮延迟 3 分钟 —— 避开启动期的扫描/富化，别跟它们抢 CPU（这台 NAS
+    只有 4 核，ffmpeg 全速会拖慢整站，见 09-24 的转码降核修复）。
+    """
+    time.sleep(180)
+    while True:
+        try:
+            if get_setting("videolc_autorun_enabled", "1") == "1":
+                r = videolc_run(trigger="autorun")
+                if r.get("started"):
+                    print(f"[videolc] 看门狗自动续跑转码（欠 {r.get('pending')} 条）", flush=True)
+        except Exception as exc:
+            print(f"[videolc] watchdog error: {type(exc).__name__}: {exc}", flush=True)
+        time.sleep(600)
 
 
 def _autoscan_loop():
@@ -11695,6 +11771,7 @@ if __name__ == "__main__":
     _vcfg = vlm_autorun_config()
     print(f"[vlm-autorun] enabled={_vcfg['enabled']} interval={_vcfg['interval_min']}min", flush=True)
     threading.Thread(target=_vlm_autorun_loop, daemon=True, name="vlm-autorun").start()
+    threading.Thread(target=_videolc_watchdog, daemon=True, name="videolc-watchdog").start()
     _pauto = privacy_auto_config()
     # 2026-09-10 二次锁死修复（修改单#4）：启动序列不再预载 pending 统计
     # （1.3 万资产的大 NOT IN 查询），首次后台轮询时再查。

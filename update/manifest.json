@@ -1,8 +1,8 @@
 {
- "version": "1.0.1",
- "file": "family_memory_update_v1.0.1.zip",
- "md5": "95c3c41eea238321040cd9ae5cb51088",
- "size": 1398757,
- "notes": "Log 原片色彩还原 + Log 视频播放转码 + ffmpeg 内存护栏",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/v1.0.1/family_memory_update_v1.0.1.zip"
+ "version": "1.0.2",
+ "file": "family_memory_update_v1.0.2.zip",
+ "md5": "01e0473e041d4738704fc47efa14e7b0",
+ "size": 1399868,
+ "notes": "Log 视频转码自动续跑（容器重启/升级后自愈）",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/v1.0.2/family_memory_update_v1.0.2.zip"
 }
