@@ -1,8 +1,8 @@
 {
- "version": "1.0.3",
- "file": "family_memory_update_v1.0.3.zip",
- "md5": "ab41a55b8912f33d4d8f5dd1307e1b14",
- "size": 1400195,
- "notes": "视频缩略图串行生成——修复 4K 视频墙打开时内存被打爆、全页灰块",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/v1.0.3/family_memory_update_v1.0.3.zip"
+ "version": "1.0.4",
+ "file": "family_memory_update_v1.0.4.zip",
+ "md5": "1909efb14fd4601b69b11dee3af1ce58",
+ "size": 1400429,
+ "notes": "修：Log 还原版缩略图被重启清理器误删（每次重启要重抽一遍 4K 帧）",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/v1.0.4/family_memory_update_v1.0.4.zip"
 }

@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.3"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.4"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -158,6 +158,11 @@ def _cleanup_orphan_cache():
             if not name.endswith(".jpg"):
                 continue
             token = name[:-4]
+            # 2026-09-24 修：Log 还原版缓存名带 _lc<tag> 后缀（如 xxx_t480_lcv1s100.jpg、
+            # xxx_lcv1s100.jpg）。旧解析只认 _t<档位>，遇到 _lc 后缀就还原不出 asset_id
+            # → 整批被当成「库里已不存在的孤儿」清掉（实测每次重启清掉 69 张还原缩略图，
+            # 用户每重启一次就要重抽一遍 4K 帧）。先剥 _lc 后缀再剥档位后缀。
+            token = re.sub(r"_lc[0-9A-Za-z]*$", "", token)
             m = re.match(r"^(.*?)_t\d+$", token)
             if m:
                 token = m.group(1)
