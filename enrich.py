@@ -34,7 +34,7 @@
   python3 enrich.py --all --dry-run          # 演练
   python3 enrich.py --blur --limit 50        # 单步 + 限量
 """
-import argparse, base64, bisect, hashlib, json, math, os, sqlite3, sys, time, urllib.request
+import argparse, base64, bisect, hashlib, json, math, os, shutil, sqlite3, subprocess, sys, tempfile, time, urllib.request
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -65,7 +65,7 @@ CLUSTER_MAX = 40         # 单簇硬上限，防病态大簇
 VISION_MIN_CONF = 0.80
 VISION_MIN_INTERVAL_SEC = 1.0   # 批量语义判定的请求间隔（免费档连发即 429）
 
-STEPS = ["hash", "blur", "junk", "similar", "pick", "vision"]
+STEPS = ["hash", "blur", "junk", "similar", "pick", "vision", "logcolor"]
 
 
 def log(*a):
@@ -156,6 +156,22 @@ def _ensure_tables(con):
     cols = {r[1] for r in con.execute("PRAGMA table_info(asset_enrich_v0)")}
     if "blur_at" not in cols:
         con.execute("ALTER TABLE asset_enrich_v0 ADD COLUMN blur_at TEXT")
+    if "logcolor_at" not in cols:
+        con.execute("ALTER TABLE asset_enrich_v0 ADD COLUMN logcolor_at TEXT")
+    # Log 原片判定表（2026-09-23）：大疆 D-Log / 影石 Flat 灰片自动识别 + 还原强度。
+    # 原片文件永不修改，还原只作用于缩略图/预览层（server.get_thumb 挂滤镜）。
+    # 与 migrations/005_log_color_v0.sql 逐字对齐 —— 两套定义必出双 schema 坑。
+    con.execute("""CREATE TABLE IF NOT EXISTS asset_log_color_v0 (
+        asset_id     TEXT PRIMARY KEY REFERENCES media_asset(asset_id),
+        is_log       INTEGER NOT NULL,
+        camera       TEXT,
+        profile      TEXT,
+        confidence   REAL,
+        source       TEXT NOT NULL,
+        strength     REAL NOT NULL DEFAULT 1.0,
+        thumb_ver    INTEGER NOT NULL DEFAULT 1,
+        detected_at  TEXT NOT NULL)""")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_alc_log ON asset_log_color_v0(is_log)")
     # 缺图留痕（2026-09-16）：缩略图/原图读不到的照片，各步骤都无法真正处理，
     # 于是「欠账」永远清不掉 —— autoscan 每轮看到 >0 就白拉起一次流水线。
     # 试过但读不到图的在这里留一条，欠账体检扣掉它；数据盘挂回来或路径修好后
@@ -171,7 +187,7 @@ def _ensure_tables(con):
 
 def _mark(con, asset_id, field):
     """标记某资产的某一步已处理过。"""
-    assert field in ("similar_at", "hash_at", "junk_at", "vision_at", "blur_at")
+    assert field in ("similar_at", "hash_at", "junk_at", "vision_at", "blur_at", "logcolor_at")
     con.execute(
         f"""INSERT INTO asset_enrich_v0 (asset_id, {field}) VALUES (?,?)
             ON CONFLICT(asset_id) DO UPDATE SET {field}=excluded.{field}""",
@@ -1151,6 +1167,188 @@ def step_vision(con, limit=0, dry=False):
 
 # ══════════════════════════════════════════════════ 状态体检
 
+# ══════════════════════════════════════════════════ 步骤 7：Log 原片识别
+
+# ── Log 画面特征阈值（多帧中位；2026-09-23 用 OsmoAction6 D-Log 原片实测标定：
+#    D-Log 实测 p1=0.07~0.16 / sat=0.09~0.16 / p99=0.80~0.93，普通片黑位通常 <0.04）
+LOG_P1_MIN  = 0.055   # 黑位抬升
+LOG_SAT_MAX = 0.22    # 饱和度均值上限
+LOG_P99_MAX = 0.93    # 白位压低
+LOG_FRAMES  = 3       # 视频采样帧数（10% / 50% / 90% 处），取中位抗单帧内容偏差
+LOGC_STRENGTH   = 1.0 # 默认还原强度（= 实测最自然的 B 档滤镜）
+LOGC_THUMB_VER  = 1   # 还原参数版本：调参后 +1，server 端旧缓存缩略图自动失效
+
+
+def _logclass_filename(fn):
+    """文件名线索分类。返回 (camera, profile, confidence, is_log)；
+    is_log=1 直接判 Log，is_log=None 表示「疑似，需要画面确认」。"""
+    low = (fn or "").lower()
+    if low.endswith("_d.mp4") or low.endswith("_d.jpg") or low.endswith("_d.mov"):
+        return "DJI", "dlog", 0.95, 1          # 大疆 D-Log 官方命名约定（_D 后缀）
+    if low.endswith(".insp") or low.endswith(".insv"):
+        return "Insta360", "flat", 0.90, 1     # 影石原片格式（Flat 色彩）
+    if "dji" in low or "insta360" in low:
+        return ("DJI" if "dji" in low else "Insta360"), "unknown", 0.30, None
+    if low.startswith("vid_") and "_00_" in low:
+        return "Insta360", "unknown", 0.30, None   # 影石全景分段命名
+    if low.startswith("gx"):
+        return "Insta360", "unknown", 0.30, None   # 影石 GO 系列
+    return None
+
+
+def _ffprobe_duration(path):
+    ffprobe = os.environ.get("FFPROBE_BIN") or shutil.which("ffprobe")
+    if not ffprobe or not os.path.exists(path):
+        return 0.0
+    try:
+        r = subprocess.run([ffprobe, "-v", "error", "-show_entries", "format=duration",
+                            "-of", "default=nw=1:nk=1", str(path)],
+                           capture_output=True, text=True, timeout=60)
+        return float(r.stdout.strip() or 0)
+    except Exception:
+        return 0.0
+
+
+def _frame_gray_stats(path, at_sec, edge=480):
+    """ffmpeg 抽单帧 → (p1 黑位, p99 白位, 饱和度均值)。失败返回 None。
+    注意 HEVC 10bit：eq/colorlevels 系滤镜遇 10bit 管线会输出黑帧，
+    这里只抽帧+PIL 算统计，不走滤镜，无此问题。"""
+    ffmpeg = os.environ.get("FFMPEG_BIN") or shutil.which("ffmpeg") or "ffmpeg"
+    fd, tmp = tempfile.mkstemp(suffix=".jpg", prefix="logc_")
+    os.close(fd)
+
+    def _fflimit():
+        # 内存护栏（2026-09-24 风暴实锤后加）：RLIMIT_AS 1.8GB + nice 19，
+        # 超限 ffmpeg 自己失败返回 None，走上游的未还原回退，不能压死 NAS。
+        try:
+            import resource
+            resource.setrlimit(resource.RLIMIT_AS, (1_800_000_000, 1_800_000_000))
+        except Exception:
+            pass
+        try:
+            os.nice(19)
+        except Exception:
+            pass
+
+    try:
+        r = subprocess.run(
+            [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-strict", "unofficial",
+             "-threads", "2", "-ss", f"{max(0.0, at_sec):.2f}", "-i", str(path), "-frames:v", "1",
+             "-vf", f"scale={edge}:-2", "-f", "image2", tmp],
+            capture_output=True, timeout=120, preexec_fn=_fflimit)
+        if r.returncode != 0 or not os.path.exists(tmp) or os.path.getsize(tmp) < 1024:
+            return None
+        from PIL import Image
+        im = Image.open(tmp).convert("RGB")
+        a = np.asarray(im).astype(np.float32) / 255.0
+        gray = a @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+        mx, mn = a.max(axis=2), a.min(axis=2)
+        sat = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1e-6), 0.0)
+        return (float(np.percentile(gray, 1)), float(np.percentile(gray, 99)),
+                float(sat.mean()))
+    except Exception:
+        return None
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _log_visual_check(path, media_type):
+    """画面特征确认是否 Log 灰片。返回 (is_log, confidence) 或 None（无法判定）。"""
+    if media_type == "video":
+        dur = _ffprobe_duration(path)
+        if not dur:
+            return None
+        points = [dur * f for f in (0.1, 0.5, 0.9)]
+    else:
+        points = [0.0]
+    feats = [f for f in (_frame_gray_stats(path, t) for t in points) if f]
+    if not feats or len(feats) < max(1, len(points) - 1):
+        return None
+    med = lambda i: sorted(f[i] for f in feats)[len(feats) // 2]
+    p1, p99, sat = med(0), med(1), med(2)
+    hit = p1 >= LOG_P1_MIN and sat <= LOG_SAT_MAX and p99 <= LOG_P99_MAX
+    return (1, 0.75) if hit else (0, 0.80)
+
+
+def step_logcolor(con, limit=0, dry=False):
+    """大疆/影石 Log 原片识别：判定写 asset_log_color_v0，原片文件永不修改。
+    还原在 server.get_thumb 生成缩略图时按 strength 挂滤镜链。
+    判据三层：文件名硬规则（_D.MP4 → D-Log）> 品牌+画面特征 > 排除。
+    全量只写判定行（每资产一行），pending 口径 = 「不在表里且未留痕」。"""
+    # GROUP BY + MAX(byte_size)：SQLite 下裸列会取自 MAX 那一行，
+    # 等价于「每个资产取最大的那个文件」，避免一资产多文件时主键冲突。
+    rows = con.execute("""
+        SELECT ma.asset_id, ma.media_type, mf.filename, mf.absolute_path,
+               MAX(mf.byte_size) AS bs
+        FROM media_asset ma LEFT JOIN media_file mf USING(asset_id)
+        WHERE ma.asset_id NOT IN (SELECT asset_id FROM asset_log_color_v0)
+          AND ma.asset_id NOT IN (SELECT asset_id FROM asset_imgmiss_v0 WHERE stage='logcolor')
+        GROUP BY ma.asset_id
+        ORDER BY bs DESC""").fetchall()
+    if limit:
+        rows = rows[:limit]
+    stat = defaultdict(int)
+    by_camera = defaultdict(int)
+    writes, misses = [], []
+    ts = now_iso()
+    for r in rows:
+        aid, mtype, fn, apath = r["asset_id"], r["media_type"], r["filename"], r["absolute_path"]
+        cls = _logclass_filename(fn)
+        if cls is None:
+            # 无任何线索：排除（写一行防重扫）
+            writes.append((aid, 0, None, None, 1.0, "auto_filename",
+                           LOGC_STRENGTH, LOGC_THUMB_VER, ts))
+            stat["normal"] += 1
+            continue
+        camera, profile, conf, is_log = cls
+        if is_log is None:
+            # 弱线索（品牌像但没标 Log）：画面特征确认
+            if not apath or not os.path.exists(apath):
+                misses.append((aid, "logcolor", ts))
+                stat["missing"] += 1
+                continue
+            verdict = _log_visual_check(apath, mtype)
+            if verdict is None:
+                misses.append((aid, "logcolor", ts))
+                stat["missing"] += 1
+                continue
+            is_log, conf = verdict
+            profile = "dlog" if (is_log and camera == "DJI") else ("flat" if is_log else "unknown")
+            src = "auto_visual"
+        else:
+            src = "auto_filename"
+        writes.append((aid, is_log, camera, profile, conf, src,
+                       LOGC_STRENGTH, LOGC_THUMB_VER, ts))
+        if is_log:
+            stat["log"] += 1
+            by_camera[f"{camera}/{profile}"] += 1
+        else:
+            stat["normal"] += 1
+    if not dry and writes:
+        con.executemany(
+            """INSERT INTO asset_log_color_v0
+               (asset_id,is_log,camera,profile,confidence,source,strength,thumb_ver,detected_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""", writes)
+    if not dry and misses:
+        con.executemany(
+            """INSERT INTO asset_imgmiss_v0 (asset_id, stage, tried_at) VALUES (?,?,?)
+               ON CONFLICT(asset_id, stage) DO UPDATE SET tried_at=excluded.tried_at""",
+            misses)
+    if not dry:
+        marks = [(w[0], ts) for w in writes]   # 缺文件的(mark 语义：没处理过就不标)
+        con.executemany(
+            """INSERT INTO asset_enrich_v0 (asset_id, logcolor_at) VALUES (?,?)
+               ON CONFLICT(asset_id) DO UPDATE SET logcolor_at=excluded.logcolor_at""", marks)
+        con.commit()
+    stat["candidates"] = len(rows)
+    stat["log_by_camera"] = dict(by_camera)
+    log(f"  [logcolor] 判定 {len(rows)}：Log {stat['log']} / 正常 {stat['normal']} / 缺文件 {stat['missing']}")
+    return stat
+
+
 def pending_work(con):
     """还有多少活要干（**便宜**，给 server 每轮 autoscan 调）。
 
@@ -1222,8 +1420,20 @@ def pending_work(con):
                                              WHERE asset_id IS NOT NULL))""").fetchone()[0]
     else:
         n5 = 0
+    # Log 原片识别：开关关闭时不算欠账（与 vision 同理，档位没启用 ≠ 有欠账）
+    # 键名与算法偏好面板一致：algo_logcolor_enabled（面板写入的就是这个键）
+    _lc_on = con.execute(
+        "SELECT value FROM app_setting_v0 WHERE key='algo_logcolor_enabled'").fetchone()
+    if (_lc_on is None) or ((_lc_on[0] or "1") != "0"):
+        n6 = con.execute(
+            """SELECT count(*) FROM media_asset ma
+               WHERE ma.asset_id NOT IN (SELECT asset_id FROM asset_log_color_v0)
+                 AND ma.asset_id NOT IN
+                     (SELECT asset_id FROM asset_imgmiss_v0 WHERE stage='logcolor')""").fetchone()[0]
+    else:
+        n6 = 0
     return {"similar": n1, "junk": n2, "blur": n3, "sha256": n4, "vision": n5,
-            "total": n1 + n2 + n3 + n4 + n5}
+            "logcolor": n6, "total": n1 + n2 + n3 + n4 + n5 + n6}
 
 
 def status(con):
@@ -1249,6 +1459,8 @@ def status(con):
         "vision_provider": (prow or {}).get("name") or "(未配置 - 语义过滤档未启用)",
         "vision_checked": q("SELECT count(*) FROM asset_vision_check_v0"),
         "vision_hit": q("SELECT count(*) FROM asset_vision_check_v0 WHERE junk=1"),
+        "logcolor_checked": q("SELECT count(*) FROM asset_log_color_v0"),
+        "logcolor_detected": q("SELECT count(*) FROM asset_log_color_v0 WHERE is_log=1"),
     }
     st["pending"] = pending_work(con)
     return st
@@ -1318,7 +1530,8 @@ def main():
                   "junk": lambda: step_junk(con, args.limit, args.dry_run),
                   "similar": lambda: step_similar(con, args.limit, args.dry_run),
                   "pick": lambda: step_pick(con, args.limit, args.repick_all, args.dry_run),
-                  "vision": lambda: step_vision(con, args.limit, args.dry_run)}[s]
+                  "vision": lambda: step_vision(con, args.limit, args.dry_run),
+                  "logcolor": lambda: step_logcolor(con, args.limit, args.dry_run)}[s]
             r = fn() or {}
             result[s] = {k: (dict(v) if isinstance(v, defaultdict) else v)
                          for k, v in r.items() if not isinstance(v, set)}

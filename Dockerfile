@@ -49,7 +49,7 @@ RUN pip install -r requirements-docker.txt
 COPY server.py schema.py geo_cities_cn.py \
      backfill_faces_full.py face_backends.py backfill_siglip_embedding.py \
      enrich.py vlm_describe_assets.py caption_days.py privacy_auto_scan.py \
-     manual_face_create.py \
+     manual_face_create.py transcode_log_videos.py \
      migrate_paths.py schema_raw.json /app/
 # ---- 核心模型内置（开源发行版，全部 Apache-2.0 可分发）----
 # YuNet 人脸检测 + SFace 人脸识别（后端默认 opencv）+ U²-Netp 抠图，合计 ≈43M。

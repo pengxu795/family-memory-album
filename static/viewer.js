@@ -222,6 +222,10 @@
     im.onload = im.onerror = function () { _pfBusy = false; _pfNext(); };
     im.src = url;
   }
+  // 2026-09-23 Log 原片（大疆 D-Log / 影石 Flat）：/orig 是未还原的灰片，
+  // 所以最高清层改用 /preview（服务端已过还原链）。代价是 2200px 封顶，
+  // 换来「点开跟墙上看到的一致」——对灰片这个取舍比满分辨率更值。
+  function topURL(a) { return (a && a.logcolor) ? '/preview?asset=' + a.id : '/orig?asset=' + a.id; }
   function schedulePrefetch(index) {
     if (_pfTimer) { clearTimeout(_pfTimer); _pfTimer = null; }
     _pfQueue.length = 0;                       // 丢弃上一张的未跑完队列
@@ -230,7 +234,7 @@
       if (x && x.type !== 'video') _pfQueue.push('/thumb?asset=' + x.id + '&edge=1600');
     });
     [up, down].forEach(function (x) {          // 原图大，只预取紧邻两张
-      if (x && x.type !== 'video') _pfQueue.push('/orig?asset=' + x.id);
+      if (x && x.type !== 'video') _pfQueue.push(topURL(x));
     });
     _pfTimer = setTimeout(function () { _pfTimer = null; _pfNext(); }, 1500);
   }
@@ -245,8 +249,10 @@
     resetZoom();
     var vm = document.getElementById('viewerMedia');
     if (a.type === 'video') {
-      // 2026-09-04 原图已被外部删除 → 静默关闭 viewer，不留黑屏/碎裂图标
-      vm.innerHTML = '<video src="/orig?asset=' + a.id + '" controls autoplay playsinline onerror="WBViewer.close()"></video>';
+      // 2026-09-24 不再静默关闭：4K HEVC 10bit 等编码 Chrome 解不动，静默 close
+      // 表现就是「点开即关，打不开」（用户实锤）。改为给出可见提示，转码缓存
+      // （videos_lc）转好后 /orig 自动换成转码文件，同 URL 即可恢复播放。
+      vm.innerHTML = '<video src="/orig?asset=' + a.id + '" controls autoplay playsinline onerror="WBViewer.videoFail()"></video>';
     } else if (a.crop && a.crop.length === 4) {
       // 非破坏性裁切：容器按裁切后比例适配视口，img 放大平移到裁切框
       // 2026-09-10 修「切图错位到右下 + 长时间黑屏」：原实现只挂一张原图，
@@ -296,7 +302,7 @@
         else promoteCrop();
       };
       wrap.appendChild(oim);   // 必须挂进 .vcrop：裁切 % 数学与 .vcrop img.pz 绝对定位都以它为基准
-      oim.src = '/orig?asset=' + a.id;
+      oim.src = topURL(a);
       schedulePrefetch(st.index);
     } else {
       // 2026-09-06 修复「点开大图黑屏几秒」：先挂缩略档再后台换原图。
@@ -347,7 +353,7 @@
         im.src = url;
       };
       mkLayer(2, '/thumb?asset=' + a.id + '&edge=1600');
-      mkLayer(3, '/orig?asset=' + a.id);
+      mkLayer(3, topURL(a));
       schedulePrefetch(st.index);
     }
     var zv = document.getElementById('vZoom');
@@ -738,6 +744,16 @@
     return { item: st.items[st.index], index: st.index, items: st.items };
   }
 
+  // 2026-09-24 视频解码失败兜底：给出可见提示而不是静默关闭 viewer
+  function videoFail() {
+    var vm = document.getElementById('viewerMedia');
+    if (!vm) return;
+    vm.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;'
+      + 'height:100vh;color:#9aa3af;font:14px/1.7 -apple-system,sans-serif;text-align:center;padding:0 32px">'
+      + '<div>该视频编码当前浏览器无法播放（如 4K HEVC 10bit）</div>'
+      + '<div style="opacity:.7">播放转码正在后台生成，完成后重新打开即可 · 手机 Safari 通常可直接播放</div></div>';
+  }
+
   window.WBViewer = {
     open: open,
     close: close,
@@ -745,6 +761,7 @@
     render: render,
     current: current,
     isOpen: isOpen,
+    videoFail: videoFail,
     zoomIn: function () { zoomBy(1.35); },
     zoomOut: function () { zoomBy(1 / 1.35); },
     rotate: rotate,

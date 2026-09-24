@@ -38,11 +38,12 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.0"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.1"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
 PREVIEW_DIR = DATA_DIR / "previews_mvp"
+VIDEO_LC_DIR = DATA_DIR / "videos_lc"   # 2026-09-23 Log 视频还原转码缓存（可选，转好一条生效一条）
 FACE_CROP_DIR = DATA_DIR / "face_crops"
 UPLOAD_DIR = DATA_DIR / "face_uploads"
 LOGS_DIR = ROOT / "logs"
@@ -4380,9 +4381,14 @@ def search_by_category(cat, value, order=None, slim=False, offset=None, limit=No
     # T4 接线（2026-09-15）：画质（模糊档位 + 美学分）随列表下发，前端出「清晰/偏软/模糊」徽标 +
     # 「只看清晰」开关。只算当前窗口，代价与 face_pos_map 同级。
     quality_map = _quality_for([a["id"] for a in page_assets], con)
+    # 2026-09-23 Log 还原标记：让查看器把最高清层换成已还原的 /preview
+    # （/orig 永远是未还原的原片，不给它挂滤镜）。同窗口一次查完。
+    logc_map = _logcolor_for_assets([a["id"] for a in page_assets], con)
     for a in page_assets:
         a["display_ratio"] = _display_ratio_for(a.get("width"), a.get("height"), a.get("type"))
         a["face_pos"] = face_pos_map.get(a["id"])
+        if a["id"] in logc_map:
+            a["logcolor"] = 1
         q = quality_map.get(a["id"])
         if q and a.get("type") == "photo":
             a["blur"] = q["blur"]
@@ -6192,6 +6198,157 @@ def _orig_exists(asset_id):
     _ORIG_EXISTS_CACHE[asset_id] = (now, ok)
     return ok
 
+# ── Log 原片色彩还原（2026-09-23）────────────────────────────────────────
+# 大疆 D-Log / 影石 Flat 灰片的通病：缩略图上又灰又平，用户以为拍坏了。
+# 判定在 enrich.py 第 7 步（logcolor）落 asset_log_color_v0，这里只管出图挂滤镜。
+# **原片文件永不修改**——还原只作用于缩略图缓存与预览图，关掉开关即恢复原样。
+# 参数取 4 档实测里最自然的一档（/tmp/logcolor_probe/compare.jpg）。
+LOGCOLOR_FULL = {"rimin": 0.09, "rimax": 0.92, "contrast": 1.10,
+                 "saturation": 1.55, "gamma": 1.03}
+
+_lc_cfg_cache = [0.0, True, 1.0]    # [读取时刻, 是否开, 全局强度] —— 10s，改设置不必重启
+_LC_ENABLED_TTL = 10.0
+_LC_ROW_CACHE = {}                  # asset_id -> (读取时刻, 当时的全局强度, (ver,params,tag)|None)
+_LC_ROW_TTL = 300.0
+
+
+def _logcolor_cfg():
+    """(是否启用, 全局强度)。走算法偏好面板（algo_logcolor_*），与其它阈值同约定。"""
+    now = time.time()
+    if now - _lc_cfg_cache[0] < _LC_ENABLED_TTL:
+        return _lc_cfg_cache[1], _lc_cfg_cache[2]
+    try:
+        on = get_algo("logcolor_enabled", "1") == "1"
+        gs = max(0.0, min(1.5, float(get_algo("logcolor_strength", "1") or 1)))
+    except Exception:
+        on, gs = True, 1.0
+    _lc_cfg_cache[:] = [now, on, gs]
+    return on, gs
+
+
+def _logcolor_params(strength):
+    """strength 0~1.5 线性插值到「无效果↔B 档」，0 = 原样输出。"""
+    s = max(0.0, min(1.5, float(strength if strength is not None else 1.0)))
+    f = LOGCOLOR_FULL
+    return {"rimin": f["rimin"] * s,
+            "rimax": 1.0 - (1.0 - f["rimax"]) * s,
+            "contrast": 1.0 + (f["contrast"] - 1.0) * s,
+            "saturation": 1.0 + (f["saturation"] - 1.0) * s,
+            "gamma": 1.0 + (f["gamma"] - 1.0) * s}
+
+
+def _logcolor_vf(p):
+    """ffmpeg 滤镜片段（不含 format/scale，由调用方拼在链首）。
+    注意：eq/colorlevels 遇 10bit 管线会输出**全黑帧**，所以整条 vf 必须以
+    format=yuv420p 开头先把 HEVC 10bit 降到 8bit——这是本功能的必修坑。"""
+    return (f"colorlevels=rimin={p['rimin']:.4f}:gimin={p['rimin']:.4f}:bimin={p['rimin']:.4f}"
+            f":rimax={p['rimax']:.4f}:gimax={p['rimax']:.4f}:bimax={p['rimax']:.4f},"
+            f"eq=contrast={p['contrast']:.4f}:saturation={p['saturation']:.4f}:gamma={p['gamma']:.4f}")
+
+
+_LOGCOLOR_PIL_SAT_FIX = 0.903   # 同数值下 PIL Color 比 ffmpeg eq 饱和高约 11%（实测 1.40 才等值于 1.55）
+
+
+def _ffmpeg_run_guarded(cmd, **kw):
+    """ffmpeg 子进程内存护栏（2026-09-24 风暴实锤后加）。
+
+    NAS 3.9GB 内存上，4K HEVC D-Log 的 ffmpeg 抽帧曾把整机推进 swap 死亡螺旋
+    （I/O 风暴压死 dockerd，见 state-20260923 快照的故障记录）。护栏：
+      · RLIMIT_AS 1.8GB —— 超限 ffmpeg 自己报错退出，调用方已有
+        「第 0 帧重试 / 未还原回退 / _thumb_fallback」三级兜底，宁可灰片不能压死机器；
+      · nice 19 —— 最低优先级，风暴期不与关键服务抢 CPU。
+    """
+    import resource as _res
+
+    def _limit():
+        try:
+            _res.setrlimit(_res.RLIMIT_AS, (1_800_000_000, 1_800_000_000))
+        except Exception:
+            pass
+        try:
+            os.nice(19)
+        except Exception:
+            pass
+
+    kw.setdefault("preexec_fn", _limit)
+    return subprocess.run(cmd, **kw)
+
+
+def _logcolor_pil(im, p):
+    """Pillow 版还原 —— 作为 ffmpeg 那条链的等价物（视频走 ffmpeg，照片走这里）。
+    三处必须按 ffmpeg 语义来，不能图省事直接用 ImageEnhance：
+      · 对比度以 **0.5 为轴**（ffmpeg eq 的 pivot）；ImageEnhance.Contrast 是绕
+        「图像均值」转的，暗片（正是灰片）上结果完全不一样；
+      · 饱和度在色度域等价缩放，PIL Color 同值偏高 ~11% → 乘补偿系数；
+      · gamma 与色阶、对比度一起压进同一条逐通道 LUT。
+    实测（平滑色度测试图）：与 ffmpeg 输出平均绝对差 0.009（满量程 1.0）。"""
+    from PIL import ImageEnhance
+    if im.mode != "RGB":
+        im = im.convert("RGB")
+    span = max(1e-6, p["rimax"] - p["rimin"])
+    lo = p["rimin"] * 255.0
+    gam = 1.0 / max(1e-6, p["gamma"])
+    lut = []
+    for v in range(256):
+        x = min(1.0, max(0.0, (v - lo) / span / 255.0))            # colorlevels
+        x = min(1.0, max(0.0, (x - 0.5) * p["contrast"] + 0.5))    # 对比度，轴 0.5
+        lut.append(min(255, max(0, int(round(x ** gam * 255.0)))))  # gamma
+    im = im.point(lut * 3)
+    # 注意判断用**原始** saturation：拿补偿后的值判断，strength=0（sat=1.0）
+    # 会被误判成需要降饱和（1.0*0.903 < 1）→ 把图洗淡。
+    if abs(p["saturation"] - 1.0) > 1e-3:
+        im = ImageEnhance.Color(im).enhance(p["saturation"] * _LOGCOLOR_PIL_SAT_FIX)
+    return im
+
+
+def logcolor_for(asset_id):
+    """该资产要不要还原。返回 (thumb_ver, params, tag) 或 None。
+    生效强度 = 全局 algo_logcolor_strength × 该资产自己的 strength（默认 1.0）；
+    二者都编进 tag，所以调参数后旧缩略图缓存自动失效、不用手工清目录。"""
+    on, gs = _logcolor_cfg()
+    if not on:
+        return None
+    now = time.time()
+    hit = _LC_ROW_CACHE.get(asset_id)
+    if hit and now - hit[0] < _LC_ROW_TTL and abs(hit[1] - gs) < 1e-6:
+        return hit[2]
+    val = None
+    try:
+        con = sqlite3.connect(DB, timeout=10)
+        con.row_factory = sqlite3.Row
+        row = con.execute("""SELECT is_log, strength, thumb_ver FROM asset_log_color_v0
+                             WHERE asset_id=?""", (asset_id,)).fetchone()
+        con.close()
+        if row and int(row["is_log"] or 0) == 1:
+            per = float(row["strength"] if row["strength"] is not None else 1.0)
+            s = max(0.0, min(1.5, gs * per))
+            ver = int(row["thumb_ver"] or 1)
+            val = (ver, _logcolor_params(s), f"v{ver}s{int(round(s * 100))}")
+    except Exception:
+        val = None      # 表还没迁（老库）→ 静默不还原，不影响出图
+    if len(_LC_ROW_CACHE) > 5000:
+        _LC_ROW_CACHE.clear()
+    _LC_ROW_CACHE[asset_id] = (now, gs, val)
+    return val
+
+
+def _logcolor_for_assets(ids, con):
+    """批量查「哪些资产要还原」，供列表接口一次性打标（照 quality_map / face_pos_map
+    的写法）。前端拿到 logcolor=1 就把查看器最高清层换成 /preview（已还原），
+    免得点开大图看到的是灰片原图。"""
+    if not ids or not _logcolor_cfg()[0]:
+        return {}
+    out = {}
+    try:
+        q = ",".join("?" * len(ids))
+        for r in con.execute("SELECT asset_id FROM asset_log_color_v0 "
+                             f"WHERE is_log=1 AND asset_id IN ({q})", list(ids)):
+            out[r[0]] = 1
+    except Exception:
+        return {}
+    return out
+
+
 _THUMB_SEM = threading.BoundedSemaphore(8)   # 2026-09-10：回源 NAS 生成缩略图全局限流
 
 
@@ -6209,21 +6366,27 @@ def get_thumb(asset_id, edge=THUMB_EDGE):
     if not _orig_exists(asset_id):
         return None
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
-    out = THUMB_DIR / f"{asset_id[6:]}_t{edge}.jpg"   # 文件名带档位，旧缓存不冲突
+    # 2026-09-23 Log 还原：缓存名多带 _lc 后缀，与未还原的旧缓存彻底隔离。
+    # 命中还原时**不复用更大档**——那些档可能是加滤镜前生成的，缩出来就是灰片。
+    lc = logcolor_for(asset_id)
+    stem = asset_id[6:]
+    out = (THUMB_DIR / f"{stem}_t{edge}_lc{lc[2]}.jpg" if lc
+           else THUMB_DIR / f"{stem}_t{edge}.jpg")   # 文件名带档位，旧缓存不冲突
     if out.exists():
         return out
-    # 优先从已缓存的更大档本地缩小（秒出，不碰 NAS）
-    for bigger in (1600, 1200, 800, 600, 480, 400):
-        if bigger <= edge:
-            continue
-        src = THUMB_DIR / f"{asset_id[6:]}_t{bigger}.jpg"
-        if src.exists():
-            try:
-                resize_to_jpeg(src, out, edge, quality=85)
-                if out.exists():
-                    return out
-            except Exception:
-                pass
+    if not lc:
+        # 优先从已缓存的更大档本地缩小（秒出，不碰 NAS）
+        for bigger in (1600, 1200, 800, 600, 480, 400):
+            if bigger <= edge:
+                continue
+            src = THUMB_DIR / f"{asset_id[6:]}_t{bigger}.jpg"
+            if src.exists():
+                try:
+                    resize_to_jpeg(src, out, edge, quality=85)
+                    if out.exists():
+                        return out
+                except Exception:
+                    pass
     con = sqlite3.connect(DB, timeout=10)
     con.row_factory = sqlite3.Row
     row = con.execute("""SELECT mf.absolute_path, ma.media_type FROM media_file mf
@@ -6243,7 +6406,18 @@ def get_thumb(asset_id, edge=THUMB_EDGE):
     with _THUMB_SEM:
         try:
             if row["media_type"] == "photo":
-                if SIPS_BIN:
+                if lc:
+                    # 2026-09-23 Log 还原：必须走 Pillow——sips 没有调色能力，
+                    # 且要与 ffmpeg 那条链同参数。_pil_load 自带 EXIF/HEIC 转正。
+                    from PIL import Image
+                    im = _logcolor_pil(_pil_load(path), lc[1])
+                    im.thumbnail((edge, edge), Image.LANCZOS)
+                    if im.mode not in ("RGB", "L"):
+                        im = im.convert("RGB")
+                    ptmp = out.with_name(out.name + f".tmp{threading.get_ident()}")
+                    im.save(str(ptmp), "JPEG", quality=90)
+                    os.replace(ptmp, out)
+                elif SIPS_BIN:
                     # Mac 原路径：sips 不应用 EXIF orientation / HEIC irot 转正，
                     # 先走 _upright_photo（ffmpeg 全图解码转正 + 磁盘缓存）再 sips 缩放。
                     up, _uw, _uh = _upright_photo(path)
@@ -6263,16 +6437,20 @@ def get_thumb(asset_id, edge=THUMB_EDGE):
             else:
                 # 2026-08-29 修复：大疆 HEVC non-full-range YUV 需 -strict unofficial；超短视频(<0.5s)回退第 0 帧
                 # 2026-09-12 缩略图"自动放大"修复：ffmpeg 同样改为临时文件 + os.replace 原子替换
+                # 2026-09-23 Log 还原：vf 链首必须 format=yuv420p（10bit 直进 eq → 全黑帧）
                 import threading as _th
                 vtmp = out.with_name(out.name + f".tmp{_th.get_ident()}")
+                vf = f"scale={edge}:-2"
+                if lc:
+                    vf = f"format=yuv420p,{vf},{_logcolor_vf(lc[1])}"
                 cmd = [FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-strict", "unofficial",
-                       "-ss", "0.5", "-i", path, "-frames:v", "1", "-vf", f"scale={edge}:-2",
+                       "-threads", "2", "-ss", "0.5", "-i", path, "-frames:v", "1", "-vf", vf,
                        "-f", "image2", str(vtmp)]
                 try:
-                    subprocess.run(cmd, capture_output=True, timeout=30, check=True)
+                    _ffmpeg_run_guarded(cmd, capture_output=True, timeout=30, check=True)
                 except subprocess.CalledProcessError:
                     cmd[cmd.index("0.5")] = "0"
-                    subprocess.run(cmd, capture_output=True, timeout=30, check=True)
+                    _ffmpeg_run_guarded(cmd, capture_output=True, timeout=30, check=True)
                 os.replace(vtmp, out)
             return out
         except Exception:
@@ -6521,14 +6699,56 @@ def get_face_crop(face_instance_id, k=3.6, size=460):
 
 
 def get_preview(asset_id):
-    """生成浏览器兼容的大图预览；只写本地缓存，不修改 NAS 原片。"""
+    """生成浏览器兼容的大图预览；只写本地缓存，不修改 NAS 原片。
+    2026-09-23：Log 原片在这里同样过一遍还原，缓存名带 _lc 后缀隔离。"""
     PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
-    out = PREVIEW_DIR / f"{asset_id[6:]}.jpg"
+    lc = logcolor_for(asset_id)
+    stem = asset_id[6:]
+    out = PREVIEW_DIR / (f"{stem}_lc{lc[2]}.jpg" if lc else f"{stem}.jpg")
     if out.exists():
         return out
     path = get_orig_path(asset_id)
     if not path:
         return None
+    if lc:
+        # 2026-09-23 修复：视频走 ffmpeg 抽帧（PIL 打不开 HEVC/MOV，之前落到
+        # 未还原回退路径 → 视频永远 404）。与 get_thumb 视频分支同构：
+        # 链首必须 format=yuv420p（10bit 直进 eq → 全黑帧），失败回退第 0 帧。
+        try:
+            _con = sqlite3.connect(DB, timeout=10)
+            _mt = _con.execute("SELECT media_type FROM media_asset WHERE asset_id=?",
+                               (asset_id,)).fetchone()
+            _con.close()
+            if _mt and _mt[0] == "video":
+                vtmp = out.with_name(out.name + f".tmp{threading.get_ident()}")
+                vf = f"format=yuv420p,scale=2200:-2,{_logcolor_vf(lc[1])}"
+                cmd = [FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-strict", "unofficial",
+                       "-threads", "2", "-ss", "0.5", "-i", path, "-frames:v", "1", "-vf", vf,
+                       "-q:v", "2", "-f", "image2", str(vtmp)]
+                try:
+                    _ffmpeg_run_guarded(cmd, capture_output=True, timeout=60, check=True)
+                except subprocess.CalledProcessError:
+                    cmd[cmd.index("0.5")] = "0"
+                    _ffmpeg_run_guarded(cmd, capture_output=True, timeout=60, check=True)
+                os.replace(vtmp, out)
+                return out
+        except Exception:
+            pass        # 视频抽帧失败：退到下面的未还原回退，宁可灰片也不能 404
+        try:
+            from PIL import Image
+            im = _logcolor_pil(_pil_load(path), lc[1])
+            im.thumbnail((2200, 2200), Image.LANCZOS)
+            if im.mode not in ("RGB", "L"):
+                im = im.convert("RGB")
+            ptmp = out.with_name(out.name + f".tmp{threading.get_ident()}")
+            im.save(str(ptmp), "JPEG", quality=90)
+            os.replace(ptmp, out)
+            return out
+        except Exception:
+            pass        # 还原失败退回未还原预览，宁可灰片也不能 404
+        out = PREVIEW_DIR / f"{stem}.jpg"
+        if out.exists():
+            return out
     try:
         resize_to_jpeg(path, out, 2200, quality=90)
         return out if out.exists() else None
@@ -10021,6 +10241,12 @@ ALGO_SETTINGS = [
      "desc": "两次视觉判定的最小间隔，防 API 限流；0 = 不限速"},
     {"key": "vision_prompt", "label": "语义判定提示词", "type": "textarea",
      "desc": "视觉模型的判定提示词，改后下一轮判定生效；JSON 输出格式那段勿删"},
+    # ---- 2026-09-23 大疆/影石 Log 原片自动还原（灰片救回，原片不动） ----
+    {"key": "logcolor_enabled", "label": "Log 原片自动还原", "type": "bool", "default": "1",
+     "desc": "大疆 D-Log / 影石 Flat 那种灰蒙蒙的原片自动提亮补色；只改缩略图和预览，原片文件永不修改"},
+    {"key": "logcolor_strength", "label": "还原力度", "type": "range",
+     "min": 0.30, "max": 1.50, "step": 0.05, "default": "1",
+     "desc": "1 = 默认实测最自然；嫌过艳往小调，还觉得发灰往大调（0.30 很轻 / 1.50 很浓）"},
 ]
 
 
@@ -11130,7 +11356,10 @@ class Handler(BaseHTTPRequestHandler):
             # 2026-08-29 点开即原图：浏览器原生可显示的格式（JPG/PNG/WebP/GIF/BMP）直通原片，
             # 不再压 2200px 转码；HEIC/视频封面等仍走转码管线
             orig_path = get_orig_path(aid)
-            if orig_path:
+            # 2026-09-23 Log 原片不能走「直通原片」这条快路：直通就等于把没还原
+            # 的灰片直接发出去，前面的还原全白做。命中还原则落到下面 get_preview
+            # 走还原链（缓存名带 _lc，不会跟这条快路互相污染）。
+            if orig_path and not logcolor_for(aid):
                 ext = os.path.splitext(orig_path)[1].lower()
                 if ext in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"):
                     size = os.path.getsize(orig_path)
@@ -11154,6 +11383,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(404)
                 self.end_headers()
                 return
+            # 2026-09-24 Log 视频转码缓存优先：DJI D-Log 是 4K HEVC Main 10（10bit），
+            # Chrome 解不动 → video onerror（用户实锤「log视频打不开」）。videos_lc/
+            # 里有转好的 H.264 8bit 版（色彩已还原、faststart 流式友好）就优先给；
+            # 没有则照旧播原片（Safari/iPhone 能解 10bit）。转好一条生效一条。
+            if logcolor_for(aid):
+                _lc_file = VIDEO_LC_DIR / (aid[6:] + "_lc.mp4")
+                try:
+                    if _lc_file.exists() and _lc_file.stat().st_size > 0:
+                        path = str(_lc_file)
+                except OSError:
+                    pass
             # 原片流式返回，支持 Range（大文件可分块加载）
             size = os.path.getsize(path)
             content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
