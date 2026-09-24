@@ -11,8 +11,9 @@ server.py 的 /orig 路由检测到转码文件后自动优先返回 → 转好�
 
 设计约束：
 - 幂等：产物已存在且 >0 字节则跳过；.tmp 半成品视为未完成（重跑重转）
-- 护栏：RLIMIT_AS 1.8GB + nice 19 + threads 2（09-23/24 swap 风暴教训，
+- 护栏：RLIMIT_AS 2.2GB 起 + nice 19（09-23/24 swap 风暴教训，
   ffmpeg 在 3.9GB NAS 上不加护栏就是事故）
+- 速度：按时段自动档（白天 1 核防卡站，23:00–08:00 夜间 2 核提速）
 - 原片永不修改；音频尽量 -c:a copy（DJI 全是 AAC）
 - 还原参数经 import server 复用，与缩略图链严格同源，不复制数值
 
@@ -39,21 +40,6 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)) or "/app")
 import server as S  # noqa: E402
 
 
-def _limit():
-    """ffmpeg 子进程护栏：超限自己死，别把 NAS 拖进 swap（09-23 血案）。
-    2026-09-24 实测 1.8GB 偏紧：4K HEVC 软解 DPB + x264 frame-threads 的
-    VSZ（含线程栈/mmap）轻松超限 → x264 报 "Error submitting video frame"
-    大面积失败。2.2GB 是虚拟内存上限（RSS 远小于此），实测稳定。"""
-    try:
-        resource.setrlimit(resource.RLIMIT_AS, (2_200_000_000, 2_200_000_000))
-    except Exception:
-        pass
-    try:
-        os.nice(19)
-    except Exception:
-        pass
-
-
 def lc_video_rows():
     """所有 is_log=1 的视频 (asset_id, filename, src_path|None)。"""
     con = sqlite3.connect(DB, timeout=30)
@@ -70,6 +56,37 @@ def lc_video_rows():
     return [(r["asset_id"], r["filename"], r["absolute_path"]) for r in rows]
 
 
+def _speed_profile():
+    """按时段自动选转码速度（2026-09-24 用户拍板：夜间自动全速）。
+
+    白天（08:00–23:00）单核：4 核 NAS 全速转码吃 2.8 核 → load 3.8 整站卡顿
+    （用户实锤），threads=1 压到 ~1 核留 3 核给相册服务；
+    夜间（23:00–08:00）自动提 2 核，速度约翻倍，睡一觉转完。
+    **每条转码前现取时段**——进程常驻跨过午夜也会自动切换，无需重启。
+    """
+    h = time.localtime().tm_hour
+    if 8 <= h < 23:
+        return 1, 2_200_000_000
+    return 2, 2_400_000_000
+
+
+def _make_limit(rlimit_as):
+    """ffmpeg 子进程护栏工厂：RLIMIT_AS 按档位走 + nice 19（风暴血案教训）。
+    2026-09-24 实测 1.8GB 偏紧：4K HEVC 软解 DPB + x264 frame-threads 的
+    VSZ（含线程栈/mmap）轻松超限 → x264 报 "Error submitting video frame"
+    大面积失败。2.2GB 起步（RSS 远小于此），夜间 2 核档放宽到 2.4GB。"""
+    def _f():
+        try:
+            resource.setrlimit(resource.RLIMIT_AS, (rlimit_as, rlimit_as))
+        except Exception:
+            pass
+        try:
+            os.nice(19)
+        except Exception:
+            pass
+    return _f
+
+
 def transcode_one(asset_id, src):
     """转一条 → 产物路径；失败返回 None。"""
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -80,26 +97,24 @@ def transcode_one(asset_id, src):
     lc = S.logcolor_for(asset_id)
     vf = ("scale=1920:1920:force_original_aspect_ratio=decrease,format=yuv420p,"
           + (S._logcolor_vf(lc[1]) + "," if lc else ""))
+    th, rl = _speed_profile()
     cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-strict", "unofficial",
-           # 单核模式（2026-09-24 下午）：4 核 NAS 全速转码吃 2.8 核 → load 3.8
-           # 整站卡顿（用户实锤）。threads=1 解码 + x264 threads=1 压到 ~1 核，
-           # 留 3 核给相册服务；速度换流畅，白天慢速推进够用。
-           "-threads", "1", "-i", src,
-           # -filter_threads 1 必须加：libavfilter 滤镜线程独立于 -threads，
-           # 默认按核数开（实测单 ffmpeg 吃 200% CPU 的元凶）
-           "-filter_threads", "1",
+           # 线程数按时段动态选（见 _speed_profile）：解码 + 滤镜 + x264 三处必须同步改，
+           # 漏一处该线程池仍按默认核数开（2026-09-24 实锤单 ffmpeg 吃 200% CPU）
+           "-threads", str(th), "-i", src,
+           "-filter_threads", str(th),
            "-vf", vf + "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
            # x264 内存限流（2026-09-24 实锤）：frame-threads/lookahead 默认值
-           # 在 1.8~2.2GB 护栏下 malloc 失败。threads=1 + lookahead 10 帧够用。
-           "-x264-params", "threads=1:lookahead-threads=1:lookahead=10:sync-lookahead=0",
+           # 在护栏下 malloc 失败。frame-threads=档位数 + lookahead 10 帧够用。
+           "-x264-params", f"threads={th}:lookahead-threads=1:lookahead=10:sync-lookahead=0",
            "-c:a", "copy", "-movflags", "+faststart",
            # -f mp4 必须显式指定：tmp 文件名以 .tmpN 结尾，ffmpeg 按最后
            # 扩展名猜 muxer 会报 "use a standard extension"（2026-09-24 实锤）
            "-f", "mp4", tmp]
     try:
         subprocess.run(cmd, capture_output=True, timeout=4 * 3600, check=True,
-                       preexec_fn=_limit)
+                       preexec_fn=_make_limit(rl))
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         err = ""
         if isinstance(e, subprocess.CalledProcessError) and e.stderr:
