@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.5"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.6"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -1182,6 +1182,8 @@ _AUTH_ADMIN_PREFIXES = (
     "/api/scene", "/api/similar/scan", "/api/similar/repick", "/api/similar/set-best",
     "/api/similar/ungroup", "/api/trip/rebuild", "/api/trip/delete", "/api/trip/save",
     "/api/faces/run", "/api/faces/status", "/api/geo/seed", "/api/geo/vision-verify",
+    # 2026-09-24 后台重活：改配置 / 手动拉起预热与转码，仅管理员
+    "/api/tasks/config", "/api/tasks/warm", "/api/tasks/videolc",
     "/api/filter/add", "/api/filter/remove", "/api/auth/users",
     # 2026-09-16 增量富化：状态查询与手动触发都属后台任务，admin 专属
     "/api/enrich",
@@ -1798,6 +1800,8 @@ def videolc_run(trigger="manual"):
     pend = videolc_pending_count()
     if pend <= 0:
         return {"ok": True, "skipped": "没有待转码的 Log 视频", "pending": 0}
+    if not res_ok(for_task="转码"):
+        return {"ok": True, "skipped": "整机内存/负载不满足护栏条件，转码暂不启动"}
     r = _spawn_worker("videolc", _VIDEO_LC_SCRIPT, "videolc.log",
                       r"transcode_log_videos\.py")
     r["pending"] = pend
@@ -1814,6 +1818,38 @@ def videolc_status():
             "running": bool(_pgrep(r"transcode_log_videos\.py")),
             "last_run_at": get_setting("videolc_last_run_at", ""),
             "last_trigger": get_setting("videolc_last_trigger", "")}
+
+
+def tasks_config_action(body):
+    """后台任务与内存护栏设置（2026-09-24 产品化）。
+
+    护栏阈值本身按机器内存自适应（res_levels），不暴露给普通用户乱调——
+    真要覆盖留给高级用户：res_warn_mb / res_danger_mb 为空即走自适应。
+    """
+    changed = {}
+    for key in ("warm_autorun_enabled", "videolc_autorun_enabled",
+                "res_guard_enabled"):
+        v = body.get(key)
+        if v is None:
+            continue
+        set_setting(key, "1" if str(v) in ("1", "true", "True", True) else "0")
+        changed[key] = get_setting(key, "1")
+    for key in ("res_warn_mb", "res_danger_mb"):
+        v = body.get(key)
+        if v is None:
+            continue
+        v = str(v).strip()
+        if v == "":
+            set_setting(key, "")
+            changed[key] = ""
+        else:
+            try:
+                iv = max(128, int(v))
+            except ValueError:
+                continue
+            set_setting(key, str(iv))
+            changed[key] = str(iv)
+    return {"ok": True, "changed": changed}
 
 
 def _videolc_watchdog():
@@ -1886,13 +1922,17 @@ def _warm_worker(ids):
         if _pgrep(r"transcode_log_videos\.py"):
             WARM_STATE["last_result"] = "让位转码，本轮结束"
             break
-        # 让位二：整机负载高就退避（4GB 机器上 load>4 基本等于有人在等）
+        # 让位二：整机水位不够就退避（内存才是真凶，负载只是表象）
         n = 0
-        while _load1() > 4.0 and n < 10:
+        while not res_ok(for_task="预热") and n < 10:
             time.sleep(30)
             n += 1
         if n >= 10:
-            WARM_STATE["last_result"] = "负载偏高，本轮暂停"
+            WARM_STATE["last_result"] = "内存/负载不满足护栏条件，本轮暂停"
+            break
+        # 熔断：跌破底线就直接杀掉 ffmpeg 收手（宁可失败，不能拖垮整机）
+        if res_emergency(reason="预热巡检"):
+            WARM_STATE["last_result"] = "触发内存熔断，本轮结束"
             break
         try:
             get_thumb(aid)
@@ -1916,6 +1956,8 @@ def warm_run(trigger="autorun"):
         return {"ok": True, "already_running": True}
     if _pgrep(r"transcode_log_videos\.py"):
         return {"ok": True, "skipped": "转码运行中，预热让位"}
+    if not res_ok(for_task="预热"):
+        return {"ok": True, "skipped": "整机内存/负载不满足护栏条件，预热暂不启动"}
     ids = warm_pending_ids()
     if not ids:
         return {"ok": True, "skipped": "库里没有视频"}
@@ -6433,20 +6475,201 @@ def _logcolor_vf(p):
 _LOGCOLOR_PIL_SAT_FIX = 0.903   # 同数值下 PIL Color 比 ffmpeg eq 饱和高约 11%（实测 1.40 才等值于 1.55）
 
 
+# ============ 全局资源护栏（2026-09-24 产品化：保证不把用户的 NAS 拖崩）============
+# 单条 ffmpeg 加 RLIMIT 只是第一层。真正的杀手是**多条叠加 + 整机本来就不宽裕**：
+# 实测过 load 76、swap 风暴把 ssh 和 dockerd 一起压死。所以还必须有整机水位闸门：
+#   · 起任何重活之前先看水位，不够就不起（退避，而不是硬上）
+#   · 运行中持续巡检，跌破危险线直接熔断（宁可这次转码/抽帧失败，脚本幂等会续跑）
+# 所有阈值按机器内存自适应——4GB 的 NAS 和 32GB 的服务器不能共用一套数字。
+def _meminfo():
+    """(总内存MB, 可用MB)；非 Linux / 读不到返回 (0,0)，此时护栏放行。"""
+    try:
+        d = {}
+        for line in open("/proc/meminfo"):
+            k, _, v = line.partition(":")
+            d[k.strip()] = int(v.split()[0]) // 1024
+        return d.get("MemTotal", 0), d.get("MemAvailable", 0)
+    except Exception:
+        return 0, 0
+
+
+def res_levels():
+    """(总内存MB, 警戒线MB, 熔断线MB)：起活的门槛 与 必须停手的底线。
+
+    默认按机器内存自适应；高级用户可用 res_warn_mb / res_danger_mb 覆盖
+    （设置面板里可填，留空 = 自适应）。
+    """
+    total, _ = _meminfo()
+    if not total:
+        return 0, 0, 0
+    ow = (get_setting("res_warn_mb", "") or "").strip()
+    od = (get_setting("res_danger_mb", "") or "").strip()
+    if ow or od:
+        try:
+            warn_mb = int(ow) if ow else max(256, total // 6)
+            danger_mb = int(od) if od else max(128, warn_mb // 2)
+            if danger_mb >= warn_mb:
+                danger_mb = max(128, warn_mb // 2)
+            return total, warn_mb, danger_mb
+        except ValueError:
+            pass
+    if total <= 4096:          # ≤4GB：本项目主力机型（Synology 3.9GB 那台）
+        return total, 700, 400
+    if total <= 8192:
+        return total, 900, 500
+    if total <= 16384:
+        return total, 1200, 700
+    return total, 2048, 1024
+
+
+def res_ffmpeg_rlimit():
+    """单条 ffmpeg 的虚拟内存上限（自适应）。转码脚本也调这个，与抽帧同源。"""
+    total, _, _ = res_levels()
+    if not total:
+        return 1_800_000_000
+    if total <= 4096:
+        # 实测：单帧抽帧在 1.8GB 下稳定，1.2GB 偏紧会让部分 4K 片失败退回灰片，
+        # 取 1.5GB 兼顾「压得住」与「出得了图」（转码另走 2.2GB 档，见转码脚本）。
+        return 1_500_000_000
+    if total <= 8192:
+        return 1_800_000_000
+    if total <= 16384:
+        return 2_400_000_000
+    return 3_000_000_000
+
+
+def res_snapshot():
+    """(总内存MB, 可用MB, 1 分钟负载)"""
+    try:
+        load1 = float(open("/proc/loadavg").read().split()[0])
+    except Exception:
+        load1 = 0.0
+    total, avail = _meminfo()
+    return total, avail, load1
+
+
+def res_ok(for_task=""):
+    """能不能起一个重活：可用内存够 + 负载不高，两者都满足才放行。"""
+    if get_setting("res_guard_enabled", "1") != "1":
+        return True
+    total, avail, load1 = res_snapshot()
+    if not total:
+        return True                       # 读不到内存信息（非 Linux）→ 放行
+    _, warn_mb, _ = res_levels()
+    load_cap = max(2.0, (os.cpu_count() or 2) * 1.5)
+    if avail < warn_mb:
+        print(f"[res-guard] 可用内存 {avail}MB < {warn_mb}MB，{for_task}暂不启动", flush=True)
+        return False
+    if load1 > load_cap:
+        print(f"[res-guard] 负载 {load1} > {load_cap}，{for_task}暂不启动", flush=True)
+        return False
+    return True
+
+
+def res_wait_ok(timeout=20.0, for_task=""):
+    """等水位恢复到安全线；超时返回 False（调用方自行决定放行还是拒绝）。"""
+    end = time.time() + max(0.0, timeout)
+    while True:
+        if res_ok(for_task=for_task):
+            return True
+        if time.time() >= end:
+            return False
+        time.sleep(2)
+
+
+def res_admit(for_task="", wait=20.0):
+    """请求级准入（用户刷视频墙这种突发量才需要）。
+
+    跟后台任务的 res_ok 不同：用户在前台等着看图，不能一句「内存不够」就甩
+    灰块。所以先等一会儿（默认 20s），等到就正常生成；等不到再分情况：
+      · 只是警戒线以下 → 放行（单条 ffmpeg 有 RLIMIT 兜底，串行锁也只有 1 路）
+      · 已跌破熔断线   → 拒绝，退回旧缓存/占位，绝不再往火上浇油
+    """
+    if get_setting("res_guard_enabled", "1") != "1":
+        return True
+    if res_wait_ok(wait, for_task=for_task):
+        return True
+    total, avail, _ = res_snapshot()
+    if not total:
+        return True
+    _, _, danger_mb = res_levels()
+    if avail < danger_mb:
+        print(f"[res-guard] 拒绝{for_task}：可用内存 {avail}MB 已跌破熔断线 "
+              f"{danger_mb}MB（退回占位，不新增解码）", flush=True)
+        return False
+    return True
+
+
+def _kill_ffmpeg():
+    """终止正在跑的 ffmpeg（内存大头）。pattern 用变量拼接——直接写字符串会
+    匹配到本进程命令行自身，把自己也杀掉（本项目踩过两次）。"""
+    n = 0
+    pat = "ffm" + "peg"
+    try:
+        for d in os.listdir("/proc"):
+            if not d.isdigit():
+                continue
+            try:
+                cmd = open(f"/proc/{d}/cmdline", "rb").read().replace(b"\0", b" ").decode("utf8", "replace")
+            except Exception:
+                continue
+            if pat not in cmd:
+                continue
+            try:
+                os.kill(int(d), 9)
+                n += 1
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return n
+
+
+def res_emergency(reason=""):
+    """熔断：可用内存跌破底线 → 杀掉 ffmpeg。宁可这次失败（幂等会续跑），
+    也不能让整机滑进 swap 风暴（那会连 SSH 和 docker 一起拖死）。"""
+    total, avail, _ = res_snapshot()
+    if not total:
+        return False
+    _, _, danger_mb = res_levels()
+    if avail >= danger_mb:
+        return False
+    n = _kill_ffmpeg()
+    if n:
+        print(f"[res-guard] 熔断：可用内存仅 {avail}MB（<{danger_mb}MB），"
+              f"已终止 {n} 个 ffmpeg（{reason}）", flush=True)
+    return bool(n)
+
+
+def _res_guard_watchdog():
+    """每 60 秒巡检一次整机水位，跌破底线就熔断。"""
+    time.sleep(60)
+    while True:
+        try:
+            if get_setting("res_guard_enabled", "1") == "1":
+                res_emergency(reason="定时巡检")
+        except Exception as exc:
+            print(f"[res-guard] watchdog error: {type(exc).__name__}: {exc}", flush=True)
+        time.sleep(60)
+
+
 def _ffmpeg_run_guarded(cmd, **kw):
     """ffmpeg 子进程内存护栏（2026-09-24 风暴实锤后加）。
 
     NAS 3.9GB 内存上，4K HEVC D-Log 的 ffmpeg 抽帧曾把整机推进 swap 死亡螺旋
     （I/O 风暴压死 dockerd，见 state-20260923 快照的故障记录）。护栏：
-      · RLIMIT_AS 1.8GB —— 超限 ffmpeg 自己报错退出，调用方已有
-        「第 0 帧重试 / 未还原回退 / _thumb_fallback」三级兜底，宁可灰片不能压死机器；
-      · nice 19 —— 最低优先级，风暴期不与关键服务抢 CPU。
+      · RLIMIT_AS 按机器内存自适应（res_ffmpeg_rlimit()，4GB 机器 1.2GB 起）——
+        超限 ffmpeg 自己报错退出，调用方已有「第 0 帧重试 / 未还原回退 /
+        _thumb_fallback」三级兜底，宁可灰片不能压死机器；
+      · nice 19 —— 最低优先级，风暴期不与关键服务抢 CPU；
+      · 起活之前还要过整机水位闸门 res_ok()，运行中由 _res_guard_watchdog 巡检熔断。
     """
     import resource as _res
 
     def _limit():
+        _rl = res_ffmpeg_rlimit()
         try:
-            _res.setrlimit(_res.RLIMIT_AS, (1_800_000_000, 1_800_000_000))
+            _res.setrlimit(_res.RLIMIT_AS, (_rl, _rl))
         except Exception:
             pass
         try:
@@ -6627,6 +6850,8 @@ def get_thumb(asset_id, edge=THUMB_EDGE):
                 # 2026-09-12 缩略图"自动放大"修复：ffmpeg 同样改为临时文件 + os.replace 原子替换
                 # 2026-09-23 Log 还原：vf 链首必须 format=yuv420p（10bit 直进 eq → 全黑帧）
                 import threading as _th
+                if not res_admit(for_task="视频抽帧"):
+                    return _thumb_fallback(asset_id)
                 with _VIDEO_THUMB_SEM:      # 4K HEVC 解码串行化（见信号量定义处的血案注释）
                     vtmp = out.with_name(out.name + f".tmp{_th.get_ident()}")
                     vf = f"scale={edge}:-2"
@@ -6910,6 +7135,8 @@ def get_preview(asset_id):
                                (asset_id,)).fetchone()
             _con.close()
             if _mt and _mt[0] == "video":
+                if not res_admit(for_task="视频预览抽帧"):
+                    return None
                 with _VIDEO_THUMB_SEM:   # 与 get_thumb 视频分支同一把串行锁
                     vtmp = out.with_name(out.name + f".tmp{threading.get_ident()}")
                     vf = f"format=yuv420p,scale=2200:-2,{_logcolor_vf(lc[1])}"
@@ -10968,7 +11195,8 @@ class Handler(BaseHTTPRequestHandler):
                          "/api/llm/model-sel",
                          "/api/models/catalog", "/api/settings/algos",
                          "/api/settings/objects",
-                         "/api/vlm/autorun", "/api/vlm/run", "/api/vlm/status"):
+                         "/api/vlm/autorun", "/api/vlm/run", "/api/vlm/status",
+                         "/api/tasks/config", "/api/tasks/warm", "/api/tasks/videolc"):
             length = int(self.headers.get("Content-Length", 0) or 0)
             try:
                 body = json.loads(self.rfile.read(length) or b"{}")
@@ -11023,6 +11251,12 @@ class Handler(BaseHTTPRequestHandler):
                     result = vlm_run("manual")
                 elif self.path == "/api/vlm/status":
                     result = vlm_status()
+                elif self.path == "/api/tasks/config":
+                    result = tasks_config_action(body)
+                elif self.path == "/api/tasks/warm":
+                    result = warm_run("manual")
+                elif self.path == "/api/tasks/videolc":
+                    result = videolc_run("manual")
                 elif self.path == "/api/geo/seed":
                     result = geo_seed(body)
                 elif self.path == "/api/geo/regions":
@@ -11503,7 +11737,16 @@ class Handler(BaseHTTPRequestHandler):
             # 两者互斥串行（都是 4K 解码，并发即内存风暴），这里给界面/排障看进度。
             self.send_response(200); self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Access-Control-Allow-Origin", "*"); self.end_headers()
-            self.wfile.write(json.dumps({"warm": warm_status(), "videolc": videolc_status()},
+            total, avail, load1 = res_snapshot()
+            _, warn_mb, danger_mb = res_levels()
+            self.wfile.write(json.dumps({
+                "warm": warm_status(), "videolc": videolc_status(),
+                "res": {"enabled": get_setting("res_guard_enabled", "1") == "1",
+                        "total_mb": total, "avail_mb": avail, "load1": load1,
+                        "warn_mb": warn_mb, "danger_mb": danger_mb,
+                        "warn_mb_override": get_setting("res_warn_mb", ""),
+                        "danger_mb_override": get_setting("res_danger_mb", ""),
+                        "ffmpeg_rlimit_mb": res_ffmpeg_rlimit() // 1048576}},
                                         ensure_ascii=False).encode()); return
         if parsed.path == "/api/asset_info":
             # 2026-09-07 查看器信息条：时间/地点/标签/人物，小字追加在页码后
@@ -11895,6 +12138,7 @@ if __name__ == "__main__":
     threading.Thread(target=_vlm_autorun_loop, daemon=True, name="vlm-autorun").start()
     threading.Thread(target=_videolc_watchdog, daemon=True, name="videolc-watchdog").start()
     threading.Thread(target=_warm_watchdog, daemon=True, name="thumb-warm-wd").start()
+    threading.Thread(target=_res_guard_watchdog, daemon=True, name="res-guard").start()
     _pauto = privacy_auto_config()
     # 2026-09-10 二次锁死修复（修改单#4）：启动序列不再预载 pending 统计
     # （1.3 万资产的大 NOT IN 查询），首次后台轮询时再查。

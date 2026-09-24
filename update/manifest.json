@@ -1,8 +1,8 @@
 {
- "version": "1.0.5",
- "file": "family_memory_update_v1.0.5.zip",
- "md5": "c683516f4192f4c7dca0ca536a5be387",
- "size": 1401982,
- "notes": "服务自管后台重活：缩略图自动预热 + 转码自动续跑（两者互斥串行）",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/v1.0.5/family_memory_update_v1.0.5.zip"
+ "version": "1.0.6",
+ "file": "family_memory_update_v1.0.6.zip",
+ "md5": "2d4d3452d943c6425f642b52898e9b75",
+ "size": 1407650,
+ "notes": "内存护栏（防 NAS 卡死）：整机水位闸门 + 熔断 + 按内存自适应；新增「后台任务与内存护栏」设置面板（预热/转码进度、开关、阈值）",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/v1.0.6/family_memory_update_v1.0.6.zip"
 }
