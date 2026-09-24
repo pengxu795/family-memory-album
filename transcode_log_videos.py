@@ -63,8 +63,11 @@ def _speed_profile():
     （用户实锤），threads=1 压到 ~1 核留 3 核给相册服务；
     夜间（23:00–08:00）自动提 2 核，速度约翻倍，睡一觉转完。
     **每条转码前现取时段**——进程常驻跨过午夜也会自动切换，无需重启。
+    时区注意：Docker 镜像默认 UTC（/etc/localtime → Etc/UTC），而 NAS 宿主是
+    东八区，直接 localtime 会整体错 8 小时（2026-09-24 实锤：北京 15 点被判成
+    夜间档）。这里显式用 UTC+8 与宿主对齐；海外用户请同步改这个偏移。
     """
-    h = time.localtime().tm_hour
+    h = (time.gmtime().tm_hour + 8) % 24
     if 8 <= h < 23:
         return 1, 2_200_000_000
     return 2, 2_400_000_000
