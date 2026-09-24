@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.6"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.7"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -1401,6 +1401,21 @@ def update_fetch_remote(man):
         return False, f"下载失败: {e}"
 
 
+# 更新包允许落地的文件（白名单最小化，2026-09-24 补）。
+# 曾经这里只放行 server.py + static/**，结果 worker 脚本（转码等脱离 web 进程的
+# 后台程序）的修复**永远分发不到用户机器**，只能手工进容器拷文件——对一个要公开发布
+# 的产品是致命缺口：别人下载了你的项目，修好的转码器他却拿不到。
+# 名单外的路径一律拒绝：远程 manifest 属外部可控数据，绝不放开任意文件写。
+UPDATE_ALLOWED_FILES = {"server.py", "transcode_log_videos.py"}
+
+
+def _update_path_ok(p):
+    """更新包中的相对路径是否允许落到 ROOT 下。"""
+    if not p or ".." in p or p.startswith("/") or "\\" in p:
+        return False
+    return p.startswith("static/") or p in UPDATE_ALLOWED_FILES
+
+
 def update_apply():
     """校验+备份+替换文件+延迟重启。返回 (ok, 消息)。"""
     man = update_best_package()
@@ -1416,9 +1431,7 @@ def update_apply():
     data_map = {}
     for f in man["files"]:
         p = str(f.get("path") or "")
-        if p != "server.py" and not p.startswith("static/"):
-            return False, f"非法更新路径: {p}"
-        if ".." in p or p.startswith("/"):
+        if not _update_path_ok(p):
             return False, f"非法更新路径: {p}"
         data = zf.read(p)
         if hashlib.md5(data).hexdigest() != f.get("md5"):
@@ -6499,43 +6512,27 @@ def res_levels():
     默认按机器内存自适应；高级用户可用 res_warn_mb / res_danger_mb 覆盖
     （设置面板里可填，留空 = 自适应）。
     """
-    total, _ = _meminfo()
+    p = machine_profile()
+    total = p["mem_total_mb"]
     if not total:
         return 0, 0, 0
     ow = (get_setting("res_warn_mb", "") or "").strip()
     od = (get_setting("res_danger_mb", "") or "").strip()
     if ow or od:
         try:
-            warn_mb = int(ow) if ow else max(256, total // 6)
+            warn_mb = int(ow) if ow else p["warn_mb"]
             danger_mb = int(od) if od else max(128, warn_mb // 2)
             if danger_mb >= warn_mb:
                 danger_mb = max(128, warn_mb // 2)
             return total, warn_mb, danger_mb
         except ValueError:
             pass
-    if total <= 4096:          # ≤4GB：本项目主力机型（Synology 3.9GB 那台）
-        return total, 700, 400
-    if total <= 8192:
-        return total, 900, 500
-    if total <= 16384:
-        return total, 1200, 700
-    return total, 2048, 1024
+    return total, p["warn_mb"], p["danger_mb"]
 
 
 def res_ffmpeg_rlimit():
     """单条 ffmpeg 的虚拟内存上限（自适应）。转码脚本也调这个，与抽帧同源。"""
-    total, _, _ = res_levels()
-    if not total:
-        return 1_800_000_000
-    if total <= 4096:
-        # 实测：单帧抽帧在 1.8GB 下稳定，1.2GB 偏紧会让部分 4K 片失败退回灰片，
-        # 取 1.5GB 兼顾「压得住」与「出得了图」（转码另走 2.2GB 档，见转码脚本）。
-        return 1_500_000_000
-    if total <= 8192:
-        return 1_800_000_000
-    if total <= 16384:
-        return 2_400_000_000
-    return 3_000_000_000
+    return machine_profile()["ffmpeg_rlimit_mb"] * 1024 * 1024
 
 
 def res_snapshot():
@@ -6556,7 +6553,7 @@ def res_ok(for_task=""):
     if not total:
         return True                       # 读不到内存信息（非 Linux）→ 放行
     _, warn_mb, _ = res_levels()
-    load_cap = max(2.0, (os.cpu_count() or 2) * 1.5)
+    load_cap = machine_profile()["load_budget"]   # 按机器内存档给，不按核数：4 核 NAS 也得压
     if avail < warn_mb:
         print(f"[res-guard] 可用内存 {avail}MB < {warn_mb}MB，{for_task}暂不启动", flush=True)
         return False
@@ -6653,6 +6650,84 @@ def _res_guard_watchdog():
         time.sleep(60)
 
 
+# ============ 资源护栏：按机器内存自适应（2026-09-24 产品化）============
+# 4GB 的 NAS 和 32GB 的台式不能共用一套数字。4K HEVC 10bit 解码是本项目最吃内存的
+# 操作，一条就能把小机器推进 swap（内存交换）死亡螺旋（09-24 实锤：load 76、
+# dockerd 被压死、SSH 命令被 SIGTERM（终止信号））。
+# **所有重活开工前必须先问 machine_profile()**，并发数 / 内存上限 / 线程数一律从
+# 这里取，调用处不许再写死。
+# 刻意不读数据库：模块导入阶段就要用这里的并发数建信号量，那时 DB 还没建好；
+# 用户手填的水位覆盖另外在 res_levels() 里叠加。
+
+# 档位表：每档数字要么来自实锤故障，要么来自容器里实测通过的值，改之前先想清楚。
+#   warn_mb / danger_mb        整机水位线：低于 warn 不起新活，低于 danger 直接熔断
+#   ffmpeg_rlimit_mb           单条抽帧 ffmpeg 的虚拟内存上限（RLIMIT_AS 地址空间上限）
+#   transcode_rlimit_mb        单条整片转码的上限（比抽帧宽：要带 x264 的多帧缓存）
+#   video_concurrency          同时解几条 4K（按**内存**定，不按 CPU 核数定）
+#   load_budget                1 分钟负载预算：超了就退避，把机器让给正在刷图的人
+#   day_threads / night_threads 重活线程数（白天压着别卡站，夜里没人用才提速）
+_MACHINE_TIERS = {
+    "small":  dict(warn_mb=400,  danger_mb=220,  ffmpeg_rlimit_mb=800,
+                   transcode_rlimit_mb=1000, video_concurrency=1,
+                   load_budget=2.0, day_threads=1, night_threads=1),
+    "mid":    dict(warn_mb=700,  danger_mb=400,  ffmpeg_rlimit_mb=1500,
+                   transcode_rlimit_mb=2200, video_concurrency=1,
+                   load_budget=3.0, day_threads=1, night_threads=2),
+    "large":  dict(warn_mb=900,  danger_mb=500,  ffmpeg_rlimit_mb=2400,
+                   transcode_rlimit_mb=2600, video_concurrency=2,
+                   load_budget=6.0, day_threads=2, night_threads=2),
+    "xlarge": dict(warn_mb=1200, danger_mb=700,  ffmpeg_rlimit_mb=3000,
+                   transcode_rlimit_mb=3200, video_concurrency=2,
+                   load_budget=8.0, day_threads=2, night_threads=4),
+}
+
+
+def machine_profile():
+    """整机资源档位：本项目「这件事最多能吃多少」的唯一答案。
+
+    为什么要自适应：同一份代码要跑在 3.9GB 的群晖、16GB 的台式、还有 Mac 直跑。
+    写死一套数字，要么小机器被拖死，要么大机器慢得没道理。
+    """
+    total, avail = _meminfo()
+    if not total:                      # 读不到（Mac / 非 Linux）：按中等档，本机内存通常够
+        tier = "mid"
+    elif total <= 3072:
+        tier = "small"
+    elif total <= 8192:                # 4~8GB：典型家用 NAS，本项目主力目标机
+        tier = "mid"
+    elif total <= 16384:
+        tier = "large"
+    else:
+        tier = "xlarge"
+    cfg = dict(_MACHINE_TIERS[tier])
+    cfg.update(tier=tier, mem_total_mb=total, mem_avail_mb=avail)
+    return cfg
+
+
+def ffmpeg_budget_ok(need_mb=None):
+    """起 ffmpeg 之前的两道闸：(ok, 原因)。
+
+    ① 可用内存够不够这条命令本身（不够的话起了也是 malloc 失败退出，白烧 CPU 还
+       把机器往 swap 里推）；② 整机负载是否超档位预算——有人正在刷图就让出去。
+    后台任务和前台都走同一个预算，不存在「前台偷偷开口子把机器压垮」的情况。
+    """
+    p = machine_profile()
+    need = int(need_mb or p["ffmpeg_rlimit_mb"])
+    floor = max(p["warn_mb"], int(need * 0.8))
+    if p["mem_avail_mb"] and p["mem_avail_mb"] < floor:
+        return False, f"可用内存 {p['mem_avail_mb']}MB < 安全线 {floor}MB"
+    if _load1() > p["load_budget"]:
+        return False, f"负载 {_load1():.1f} > 预算 {p['load_budget']}"
+    return True, ""
+
+
+def bj_hour():
+    """当前北京时间（0-23）。Docker 镜像默认 UTC（协调世界时），直接 localtime
+    会错 8 小时（09-24 实锤：北京 15 点被判成凌晨 7 点，白天走了夜间提速档）。"""
+    return (time.gmtime().tm_hour + 8) % 24
+
+
+
 def _ffmpeg_run_guarded(cmd, **kw):
     """ffmpeg 子进程内存护栏（2026-09-24 风暴实锤后加）。
 
@@ -6662,7 +6737,9 @@ def _ffmpeg_run_guarded(cmd, **kw):
         超限 ffmpeg 自己报错退出，调用方已有「第 0 帧重试 / 未还原回退 /
         _thumb_fallback」三级兜底，宁可灰片不能压死机器；
       · nice 19 —— 最低优先级，风暴期不与关键服务抢 CPU；
-      · 起活之前还要过整机水位闸门 res_ok()，运行中由 _res_guard_watchdog 巡检熔断。
+      · 水位闸门不在本函数内部（照片缩略图也走它，一律拦截会让正常浏览也变灰），
+        由调用方按场景选择：后台批量用 res_ok()，前台刷图用 res_admit()；
+        运行中由 _res_guard_watchdog 每 60 秒巡检，跌破熔断线直接杀 ffmpeg。
     """
     import resource as _res
 
@@ -6760,7 +6837,7 @@ _THUMB_SEM = threading.BoundedSemaphore(8)   # 2026-09-10：回源 NAS 生成缩
 # 2026-09-24 视频抽帧专用串行锁：一条 4K HEVC 10bit 解码就能吃 1~2GB，
 # _THUMB_SEM 的 8 路并发 × 4K = 内存耗尽 → swap 风暴（实测 load 76、ssh 都被
 # SIGTERM，墙面 217 张缩略图全部超时灰块）。视频缩略图串行生成，慢但稳。
-_VIDEO_THUMB_SEM = threading.BoundedSemaphore(1)
+_VIDEO_THUMB_SEM = threading.BoundedSemaphore(machine_profile()["video_concurrency"])
 
 
 def get_thumb(asset_id, edge=THUMB_EDGE):
@@ -11746,7 +11823,10 @@ class Handler(BaseHTTPRequestHandler):
                         "warn_mb": warn_mb, "danger_mb": danger_mb,
                         "warn_mb_override": get_setting("res_warn_mb", ""),
                         "danger_mb_override": get_setting("res_danger_mb", ""),
-                        "ffmpeg_rlimit_mb": res_ffmpeg_rlimit() // 1048576}},
+                        "ffmpeg_rlimit_mb": res_ffmpeg_rlimit() // 1048576,
+                        "tier": machine_profile()["tier"],
+                        "video_concurrency": machine_profile()["video_concurrency"],
+                        "transcode_rlimit_mb": machine_profile()["transcode_rlimit_mb"]}},
                                         ensure_ascii=False).encode()); return
         if parsed.path == "/api/asset_info":
             # 2026-09-07 查看器信息条：时间/地点/标签/人物，小字追加在页码后

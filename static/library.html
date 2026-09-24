@@ -2386,7 +2386,9 @@ async function refreshTasks(){try{
   const r=d.res||{};const total=r.total_mb||0,avail=r.avail_mb||0;
   if(total){const pct=Math.round(avail/total*100);const bar=document.querySelector('#resBar');if(bar){bar.style.width=pct+'%';bar.className=avail<(r.danger_mb||0)?'danger':(avail<(r.warn_mb||0)?'warn':'')}
     set('#resLine',`可用 ${avail}MB / 共 ${total}MB（${pct}%）· 负载 ${(r.load1||0).toFixed(1)}`);
-    set('#resHint',`护栏${r.enabled?'已开启':'已关闭'}：可用低于 ${r.warn_mb}MB 不起活，低于 ${r.danger_mb}MB 直接终止解码；单条解码上限 ${r.ffmpeg_rlimit_mb}MB`);}
+    const tierMap={small:'小内存机（≤3GB）',mid:'家用 NAS（3~8GB）',large:'大内存机（8~16GB）',xlarge:'服务器级（>16GB）'};
+    const tierTxt=r.tier?`　机型档位：${tierMap[r.tier]||r.tier}`:'';
+    set('#resHint',`护栏${r.enabled?'已开启':'已关闭'}：可用低于 ${r.warn_mb}MB 不起活，低于 ${r.danger_mb}MB 直接终止解码；单条解码上限 ${r.ffmpeg_rlimit_mb}MB、同时最多 ${r.video_concurrency||1} 路 4K 抽帧、整片转码上限 ${r.transcode_rlimit_mb||'—'}MB。${tierTxt} 参数按本机内存自动选档，不怕把 NAS 拖崩。`);}
   else{set('#resLine','本机未读到内存信息（护栏自动放行）');set('#resHint','')}
   const wi=document.querySelector('#warnMb'),di=document.querySelector('#dangerMb');
   if(wi&&document.activeElement!==wi)wi.value=r.warn_mb_override||'';
