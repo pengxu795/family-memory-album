@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.4"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.5"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -1825,13 +1825,116 @@ def _videolc_watchdog():
     time.sleep(180)
     while True:
         try:
-            if get_setting("videolc_autorun_enabled", "1") == "1":
+            # 与预热互斥：两个都是 4K 解码，同时跑内存必然吃紧（09-24 风暴教训）。
+            # 注意不能用 continue——会跳过末尾 sleep 变成忙循环，本轮不拉即可。
+            if (not WARM_STATE.get("running")
+                    and get_setting("videolc_autorun_enabled", "1") == "1"):
                 r = videolc_run(trigger="autorun")
                 if r.get("started"):
                     print(f"[videolc] 看门狗自动续跑转码（欠 {r.get('pending')} 条）", flush=True)
         except Exception as exc:
             print(f"[videolc] watchdog error: {type(exc).__name__}: {exc}", flush=True)
         time.sleep(600)
+
+
+# ============ 缩略图预热自动守护（2026-09-24 产品化）============
+# 视频缩略图要靠 ffmpeg 抽帧，一条 4K HEVC 就能吃 1~2GB。用户第一次打开视频墙
+# 会一次性触发几十条抽帧 → 内存风暴（实测 load 76、整页灰块）。与其等用户撞上，
+# 不如服务空闲时自己串行补齐。**串行是硬要求**：并发数按核数定就是事故，
+# 必须按「单请求峰值内存」定。这里一次只解一条，且遇到转码或高负载就主动让位。
+WARM_STATE = {"running": False, "done": 0, "total": 0, "started_at": "",
+              "last_result": ""}
+
+
+def _load1():
+    """1 分钟负载；读不到返回 0（非 Linux 环境）。"""
+    try:
+        return float(open("/proc/loadavg").read().split()[0])
+    except Exception:
+        return 0.0
+
+
+def warm_pending_ids():
+    """待预热的视频（按时间倒序，最近的先补）。
+    命中缓存的 get_thumb 只是 stat 级开销，所以每轮全量过一遍也不贵。"""
+    try:
+        con = sqlite3.connect(DB, timeout=10)
+        con.row_factory = sqlite3.Row
+        con.execute("PRAGMA busy_timeout=10000")
+        rows = con.execute("SELECT asset_id FROM media_asset WHERE media_type='video' "
+                           "ORDER BY capture_time DESC").fetchall()
+        con.close()
+        return [str(r["asset_id"]) for r in rows]
+    except Exception:
+        return []
+
+
+def warm_status():
+    """预热状态（任务面板/排障用）。"""
+    return {"enabled": get_setting("warm_autorun_enabled", "1") == "1",
+            "running": WARM_STATE["running"], "done": WARM_STATE["done"],
+            "total": WARM_STATE["total"], "started_at": WARM_STATE["started_at"],
+            "last_at": get_setting("warm_last_at", ""),
+            "last_result": WARM_STATE["last_result"]}
+
+
+def _warm_worker(ids):
+    WARM_STATE.update(running=True, total=len(ids), done=0, started_at=now_iso())
+    done = fail = 0
+    for aid in ids:
+        # 让位一：转码在跑就不跟它抢内存（两个都是 4K 解码，同时跑必然内存吃紧）
+        if _pgrep(r"transcode_log_videos\.py"):
+            WARM_STATE["last_result"] = "让位转码，本轮结束"
+            break
+        # 让位二：整机负载高就退避（4GB 机器上 load>4 基本等于有人在等）
+        n = 0
+        while _load1() > 4.0 and n < 10:
+            time.sleep(30)
+            n += 1
+        if n >= 10:
+            WARM_STATE["last_result"] = "负载偏高，本轮暂停"
+            break
+        try:
+            get_thumb(aid)
+            get_thumb(aid, 1600)
+            done += 1
+        except Exception:
+            fail += 1
+        WARM_STATE["done"] = done
+        time.sleep(0.2)
+    WARM_STATE["running"] = False
+    WARM_STATE["last_result"] = f"本轮补齐 {done} 条，失败 {fail} 条"
+    set_setting("warm_last_at", now_iso())
+    print(f"[warm] {WARM_STATE['last_result']}", flush=True)
+
+
+def warm_run(trigger="autorun"):
+    """拉起预热（幂等：已在跑 / 转码占用 / 无视频则不重复）。"""
+    if trigger == "autorun" and get_setting("warm_autorun_enabled", "1") != "1":
+        return {"ok": True, "skipped": "warm_autorun_enabled=0"}
+    if WARM_STATE["running"]:
+        return {"ok": True, "already_running": True}
+    if _pgrep(r"transcode_log_videos\.py"):
+        return {"ok": True, "skipped": "转码运行中，预热让位"}
+    ids = warm_pending_ids()
+    if not ids:
+        return {"ok": True, "skipped": "库里没有视频"}
+    threading.Thread(target=_warm_worker, args=(ids,), daemon=True,
+                     name="thumb-warm").start()
+    return {"ok": True, "started": True, "pending": len(ids)}
+
+
+def _warm_watchdog():
+    """看门狗：启动 5 分钟后首检，之后每 30 分钟。缓存齐全就几秒扫完退出。"""
+    time.sleep(300)
+    while True:
+        try:
+            r = warm_run(trigger="autorun")
+            if r.get("started"):
+                print(f"[warm] 看门狗拉起预热（{r.get('pending')} 条待检查）", flush=True)
+        except Exception as exc:
+            print(f"[warm] watchdog error: {type(exc).__name__}: {exc}", flush=True)
+        time.sleep(1800)
 
 
 def _autoscan_loop():
@@ -11395,6 +11498,13 @@ class Handler(BaseHTTPRequestHandler):
                                          "feed_url": get_update_feed_url(),
                                          "is_admin": bool(user and user.get("role") == "admin")},
                                         ensure_ascii=False).encode()); return
+        if parsed.path == "/api/tasks":
+            # 后台重活状态（2026-09-24）：Log 视频转码 + 缩略图预热。
+            # 两者互斥串行（都是 4K 解码，并发即内存风暴），这里给界面/排障看进度。
+            self.send_response(200); self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*"); self.end_headers()
+            self.wfile.write(json.dumps({"warm": warm_status(), "videolc": videolc_status()},
+                                        ensure_ascii=False).encode()); return
         if parsed.path == "/api/asset_info":
             # 2026-09-07 查看器信息条：时间/地点/标签/人物，小字追加在页码后
             aid = urllib.parse.parse_qs(parsed.query).get("asset", [""])[0]
@@ -11784,6 +11894,7 @@ if __name__ == "__main__":
     print(f"[vlm-autorun] enabled={_vcfg['enabled']} interval={_vcfg['interval_min']}min", flush=True)
     threading.Thread(target=_vlm_autorun_loop, daemon=True, name="vlm-autorun").start()
     threading.Thread(target=_videolc_watchdog, daemon=True, name="videolc-watchdog").start()
+    threading.Thread(target=_warm_watchdog, daemon=True, name="thumb-warm-wd").start()
     _pauto = privacy_auto_config()
     # 2026-09-10 二次锁死修复（修改单#4）：启动序列不再预载 pending 统计
     # （1.3 万资产的大 NOT IN 查询），首次后台轮询时再查。

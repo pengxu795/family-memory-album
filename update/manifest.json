@@ -1,8 +1,8 @@
 {
- "version": "1.0.4",
- "file": "family_memory_update_v1.0.4.zip",
- "md5": "1909efb14fd4601b69b11dee3af1ce58",
- "size": 1400429,
- "notes": "修：Log 还原版缩略图被重启清理器误删（每次重启要重抽一遍 4K 帧）",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/v1.0.4/family_memory_update_v1.0.4.zip"
+ "version": "1.0.5",
+ "file": "family_memory_update_v1.0.5.zip",
+ "md5": "c683516f4192f4c7dca0ca536a5be387",
+ "size": 1401982,
+ "notes": "服务自管后台重活：缩略图自动预热 + 转码自动续跑（两者互斥串行）",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/v1.0.5/family_memory_update_v1.0.5.zip"
 }
