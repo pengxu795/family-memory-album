@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.2"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.3"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -6426,6 +6426,10 @@ def _logcolor_for_assets(ids, con):
 
 
 _THUMB_SEM = threading.BoundedSemaphore(8)   # 2026-09-10：回源 NAS 生成缩略图全局限流
+# 2026-09-24 视频抽帧专用串行锁：一条 4K HEVC 10bit 解码就能吃 1~2GB，
+# _THUMB_SEM 的 8 路并发 × 4K = 内存耗尽 → swap 风暴（实测 load 76、ssh 都被
+# SIGTERM，墙面 217 张缩略图全部超时灰块）。视频缩略图串行生成，慢但稳。
+_VIDEO_THUMB_SEM = threading.BoundedSemaphore(1)
 
 
 def get_thumb(asset_id, edge=THUMB_EDGE):
@@ -6515,19 +6519,21 @@ def get_thumb(asset_id, edge=THUMB_EDGE):
                 # 2026-09-12 缩略图"自动放大"修复：ffmpeg 同样改为临时文件 + os.replace 原子替换
                 # 2026-09-23 Log 还原：vf 链首必须 format=yuv420p（10bit 直进 eq → 全黑帧）
                 import threading as _th
-                vtmp = out.with_name(out.name + f".tmp{_th.get_ident()}")
-                vf = f"scale={edge}:-2"
-                if lc:
-                    vf = f"format=yuv420p,{vf},{_logcolor_vf(lc[1])}"
-                cmd = [FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-strict", "unofficial",
-                       "-threads", "2", "-ss", "0.5", "-i", path, "-frames:v", "1", "-vf", vf,
-                       "-f", "image2", str(vtmp)]
-                try:
-                    _ffmpeg_run_guarded(cmd, capture_output=True, timeout=30, check=True)
-                except subprocess.CalledProcessError:
-                    cmd[cmd.index("0.5")] = "0"
-                    _ffmpeg_run_guarded(cmd, capture_output=True, timeout=30, check=True)
-                os.replace(vtmp, out)
+                with _VIDEO_THUMB_SEM:      # 4K HEVC 解码串行化（见信号量定义处的血案注释）
+                    vtmp = out.with_name(out.name + f".tmp{_th.get_ident()}")
+                    vf = f"scale={edge}:-2"
+                    if lc:
+                        vf = f"format=yuv420p,{vf},{_logcolor_vf(lc[1])}"
+                    cmd = [FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-strict", "unofficial",
+                           "-threads", "2", "-ss", "0.5", "-i", path, "-frames:v", "1", "-vf", vf,
+                           "-f", "image2", str(vtmp)]
+                    try:
+                        # timeout 90s：负载高时 4K 解码要 30s+，30s 会把能成功的也判死
+                        _ffmpeg_run_guarded(cmd, capture_output=True, timeout=90, check=True)
+                    except subprocess.CalledProcessError:
+                        cmd[cmd.index("0.5")] = "0"
+                        _ffmpeg_run_guarded(cmd, capture_output=True, timeout=90, check=True)
+                    os.replace(vtmp, out)
             return out
         except Exception:
             return _thumb_fallback(asset_id)
@@ -6796,17 +6802,18 @@ def get_preview(asset_id):
                                (asset_id,)).fetchone()
             _con.close()
             if _mt and _mt[0] == "video":
-                vtmp = out.with_name(out.name + f".tmp{threading.get_ident()}")
-                vf = f"format=yuv420p,scale=2200:-2,{_logcolor_vf(lc[1])}"
-                cmd = [FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-strict", "unofficial",
-                       "-threads", "2", "-ss", "0.5", "-i", path, "-frames:v", "1", "-vf", vf,
-                       "-q:v", "2", "-f", "image2", str(vtmp)]
-                try:
-                    _ffmpeg_run_guarded(cmd, capture_output=True, timeout=60, check=True)
-                except subprocess.CalledProcessError:
-                    cmd[cmd.index("0.5")] = "0"
-                    _ffmpeg_run_guarded(cmd, capture_output=True, timeout=60, check=True)
-                os.replace(vtmp, out)
+                with _VIDEO_THUMB_SEM:   # 与 get_thumb 视频分支同一把串行锁
+                    vtmp = out.with_name(out.name + f".tmp{threading.get_ident()}")
+                    vf = f"format=yuv420p,scale=2200:-2,{_logcolor_vf(lc[1])}"
+                    cmd = [FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-strict", "unofficial",
+                           "-threads", "2", "-ss", "0.5", "-i", path, "-frames:v", "1", "-vf", vf,
+                           "-q:v", "2", "-f", "image2", str(vtmp)]
+                    try:
+                        _ffmpeg_run_guarded(cmd, capture_output=True, timeout=120, check=True)
+                    except subprocess.CalledProcessError:
+                        cmd[cmd.index("0.5")] = "0"
+                        _ffmpeg_run_guarded(cmd, capture_output=True, timeout=120, check=True)
+                    os.replace(vtmp, out)
                 return out
         except Exception:
             pass        # 视频抽帧失败：退到下面的未还原回退，宁可灰片也不能 404

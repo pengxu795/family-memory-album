@@ -1,8 +1,8 @@
 {
- "version": "1.0.2",
- "file": "family_memory_update_v1.0.2.zip",
- "md5": "01e0473e041d4738704fc47efa14e7b0",
- "size": 1399868,
- "notes": "Log 视频转码自动续跑（容器重启/升级后自愈）",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/v1.0.2/family_memory_update_v1.0.2.zip"
+ "version": "1.0.3",
+ "file": "family_memory_update_v1.0.3.zip",
+ "md5": "ab41a55b8912f33d4d8f5dd1307e1b14",
+ "size": 1400195,
+ "notes": "视频缩略图串行生成——修复 4K 视频墙打开时内存被打爆、全页灰块",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/v1.0.3/family_memory_update_v1.0.3.zip"
 }
