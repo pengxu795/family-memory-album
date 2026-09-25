@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.8"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.9"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -1904,8 +1904,15 @@ def _load1():
 
 
 def warm_pending_ids():
-    """待预热的视频（按时间倒序，最近的先补）。
-    命中缓存的 get_thumb 只是 stat 级开销，所以每轮全量过一遍也不贵。"""
+    """待预热的视频（按时间倒序，最近的先补）——**只留缓存确实缺档的**。
+
+    2026-09-25 改。原实现返回全部视频（3925 条），预热一轮要刷近 2 小时；而预热与
+    转码是互斥的（同时跑 4K 解码就是 09-24 那场 swap 风暴的根因），于是预热那一轮里
+    转码几乎被饿死——实测预热跑到 98/3925 时，转码 143 条一条都没动，用户看到的就是
+    「转码又不动了」。
+    这里整目录扫一次建好文件名索引，只把 t480 / t1600 两档不齐全的视频留下来；
+    缓存其实齐全的视频不再占用那把串行锁。
+    """
     try:
         con = sqlite3.connect(DB, timeout=10)
         con.row_factory = sqlite3.Row
@@ -1913,9 +1920,32 @@ def warm_pending_ids():
         rows = con.execute("SELECT asset_id FROM media_asset WHERE media_type='video' "
                            "ORDER BY capture_time DESC").fetchall()
         con.close()
-        return [str(r["asset_id"]) for r in rows]
     except Exception:
         return []
+    if not rows:
+        return []
+    # 一次性把缩略图目录建成索引，避免 3925 次 glob（每次都要重扫目录）
+    try:
+        with os.scandir(THUMB_DIR) as it:
+            have = [e.name for e in it]
+    except Exception:
+        have = []                       # 目录读不到（还很常见）：退回全量，宁可多跑
+    have480, have1600 = set(), set()
+    for name in have:
+        if not name.endswith(".jpg"):
+            continue
+        base = name[:-4]
+        k = base.rfind("_t")            # 形如 <asset_id后6位>_t480_lcv1.jpg
+        if k <= 0:
+            continue
+        stem, edge = base[:k], base[k + 2:].split("_")[0]
+        if edge == "480":
+            have480.add(stem)
+        elif edge == "1600":
+            have1600.add(stem)
+    return [str(r["asset_id"]) for r in rows
+            if str(r["asset_id"])[6:] not in have480
+            or str(r["asset_id"])[6:] not in have1600]
 
 
 def warm_status():
@@ -1973,7 +2003,7 @@ def warm_run(trigger="autorun"):
         return {"ok": True, "skipped": "整机内存/负载不满足护栏条件，预热暂不启动"}
     ids = warm_pending_ids()
     if not ids:
-        return {"ok": True, "skipped": "库里没有视频"}
+        return {"ok": True, "skipped": "没有待预热视频（缓存已齐）"}
     threading.Thread(target=_warm_worker, args=(ids,), daemon=True,
                      name="thumb-warm").start()
     return {"ok": True, "started": True, "pending": len(ids)}
