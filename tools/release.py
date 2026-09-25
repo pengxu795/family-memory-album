@@ -177,8 +177,12 @@ def git_release(version, notes, name):
         return False
     if run(["git", "commit", "-m", msg]).returncode:
         print("· 没有新改动可提交（或提交被拦），继续")
-    run(["git", "tag", "-f", version if version.startswith("v") else "v" + version])
-    run(["git", "push", "origin", "main", "--follow-tags"])
+    tag = version if version.startswith("v") else "v" + version
+    run(["git", "tag", "-f", tag])
+    run(["git", "push", "origin", "main"])
+    # 注意：--follow-tags 在这台机器/这个远端上不会把新建的轻量 tag 推上去，
+    # 少了这一步 gh release create 会报「tag has not been pushed」，故显式推一次。
+    run(["git", "push", "origin", tag])
     gh = shutil.which("gh")
     if not gh:
         print("! 本机没有 gh，跳过 GitHub Release（手动上传 %s 即可）" % name)
