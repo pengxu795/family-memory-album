@@ -1,8 +1,8 @@
 {
- "version": "1.0.7",
- "file": "family_memory_update_v1.0.7.zip",
- "md5": "cdd049ee8bfa9ee84c7c78c967cdeaf6",
- "size": 1409975,
- "notes": "内存护栏合并为唯一自适应档位（机型自动识别：小内存/家用NAS/大内存/服务器级），并发、线程、内存上限全部按本机内存取值，不再写死；更新机制补 worker 脚本白名单（为下一版起 worker 可随包升级铺路）；后台任务面板显示机型档位与实时上限",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/v1.0.7/family_memory_update_v1.0.7.zip"
+ "version": "1.0.8",
+ "file": "family_memory_update_v1.0.8.zip",
+ "md5": "39d57c13a8a03d8d188f4e8392981902",
+ "size": 1414766,
+ "notes": "转码脚本改为按本机内存档位取参数（不再写死 2.2GB/2核），并在开工前先等整机水位回到安全线，避免转码跑到一半被熔断杀掉；更新包白名单正式允许后台 worker 脚本随包升级（此前后台脚本的修复永远送不到用户机器上）",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/v1.0.8/family_memory_update_v1.0.8.zip"
 }

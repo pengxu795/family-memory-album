@@ -11,7 +11,8 @@ server.py 的 /orig 路由检测到转码文件后自动优先返回 → 转好�
 
 设计约束：
 - 幂等：产物已存在且 >0 字节则跳过；.tmp 半成品视为未完成（重跑重转）
-- 护栏：RLIMIT_AS 2.2GB 起 + nice 19（09-23/24 swap 风暴教训，
+- 护栏：RLIMIT_AS 按本机内存档位取值（server.machine_profile()，不是写死的
+  2.2GB）+ nice 19；开工前先等整机水位回到安全线（09-23/24 swap 风暴教训，
   ffmpeg 在 3.9GB NAS 上不加护栏就是事故）
 - 速度：按时段自动档（白天 1 核防卡站，23:00–08:00 夜间 2 核提速）
 - 原片永不修改；音频尽量 -c:a copy（DJI 全是 AAC）
@@ -56,21 +57,40 @@ def lc_video_rows():
     return [(r["asset_id"], r["filename"], r["absolute_path"]) for r in rows]
 
 
-def _speed_profile():
-    """按时段自动选转码速度（2026-09-24 用户拍板：夜间自动全速）。
+def _server_profile():
+    """读 server.py 的整机档位表；拿不到（版本错配/导入异常）就用保守默认值。"""
+    try:
+        fn = getattr(S, "machine_profile", None)
+        if callable(fn):
+            p = fn()
+            if isinstance(p, dict) and p:
+                return p
+    except Exception as exc:
+        print(f"  [warn] 读不到整机档位表，按保守值跑：{exc}", flush=True)
+    return {"tier": "unknown", "day_threads": 1, "night_threads": 1,
+            "transcode_rlimit_mb": 2200}
 
-    白天（08:00–23:00）单核：4 核 NAS 全速转码吃 2.8 核 → load 3.8 整站卡顿
-    （用户实锤），threads=1 压到 ~1 核留 3 核给相册服务；
-    夜间（23:00–08:00）自动提 2 核，速度约翻倍，睡一觉转完。
+
+def _speed_profile():
+    """按时段 + 机器档位自动选转码速度（2026-09-24 用户拍板：夜间自动全速）。
+
+    白天（08:00–23:00）压线程：4 核 NAS 全速转码吃 2.8 核 → load 3.8 整站卡顿
+    （用户实锤），threads=1 压到 ~1 核留余量给相册服务；夜间自动提档，睡一觉转完。
     **每条转码前现取时段**——进程常驻跨过午夜也会自动切换，无需重启。
-    时区注意：Docker 镜像默认 UTC（/etc/localtime → Etc/UTC），而 NAS 宿主是
-    东八区，直接 localtime 会整体错 8 小时（2026-09-24 实锤：北京 15 点被判成
-    夜间档）。这里显式用 UTC+8 与宿主对齐；海外用户请同步改这个偏移。
+
+    线程数与内存上限全部取自 server.machine_profile() 的档位表（server.py 里
+    唯一的参数源）。这批数字是 09-24 真机故障换来的，写死在这里等于让 16GB 的
+    机器跟着 3.9GB 的 NAS 一起龟速。时区同理走 server.bj_hour()：Docker 镜像
+    默认 UTC（协调世界时），容器里直接 localtime 会整体错 8 小时（09-24 实锤：
+    北京 15 点被判成夜间档）。
     """
-    h = (time.gmtime().tm_hour + 8) % 24
-    if 8 <= h < 23:
-        return 1, 2_200_000_000
-    return 2, 2_400_000_000
+    p = _server_profile()
+    hour_fn = getattr(S, "bj_hour", None) or (lambda: (time.gmtime().tm_hour + 8) % 24)
+    night = not (8 <= hour_fn() < 23)
+    th = p.get("night_threads", 2) if night else p.get("day_threads", 1)
+    th = max(1, min(int(th), os.cpu_count() or 1))
+    base = int(p.get("transcode_rlimit_mb", 2200))
+    return th, int(base * (1.1 if night else 1.0)) * 1024 * 1024
 
 
 def _make_limit(rlimit_as):
@@ -165,6 +185,12 @@ def main():
     t0 = time.time()
     for aid, fn, src in todo:
         if args.limit and n >= args.limit:
+            break
+        # 每条开工前先问整机水位（server.res_wait_ok）：不够就退避，最多等 10 分钟。
+        # 硬上的后果是跑到一半被 server 的巡检熔断杀掉，白烧几十分钟 CPU 还不出片。
+        _wait_ok = getattr(S, "res_wait_ok", None) or (lambda *a, **k: True)
+        if not _wait_ok(600, for_task="Log 视频转码"):
+            print("[res-guard] 水位持续偏低，暂停转码（队列幂等，稍后会自动续跑）", flush=True)
             break
         sz = os.path.getsize(src) / 1e9
         t1 = time.time()
