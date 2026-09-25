@@ -142,9 +142,15 @@ def build_zip(version, notes, with_worker):
     out.mkdir(exist_ok=True)
     name = "family_memory_update_v%s.zip" % version
     zpath = out / name
+    # ★ 包内必须带 manifest.json：服务端 update_best_package() 就是靠读 zip 里的
+    #   manifest.json 认包的（认不到就跳过这个包），少了它用户永远升不上新版本。
+    inner = {"version": version, "notes": notes, "files": []}
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
         for f in files:
-            z.write(f, f.relative_to(REL).as_posix())
+            rel = f.relative_to(REL).as_posix()
+            z.write(f, rel)
+            inner["files"].append({"path": rel, "md5": hashlib.md5(f.read_bytes()).hexdigest()})
+        z.writestr("manifest.json", json.dumps(inner, ensure_ascii=False, indent=1))
     raw = zpath.read_bytes()
     print("✓ %s: %d 文件, %.0f KB"
           % (name, len(files), len(raw) / 1024))
