@@ -520,7 +520,7 @@ body.sel-mode .qbox{display:none}
 <script src="/viewer.js?v=20260908b"></script>
 <section id="tripModal" class="trip-modal" aria-hidden="true"><div class="trip-card"><div class="head"><h2>旅行地点标记</h2><button onclick="closeTripModal()">×</button></div><div class="body"><p class="hint">给一段日期范围打上地点标签（如「黄山 2024-05-01 ~ 2024-05-05」），系统会把这些天无 GPS 的照片归入对应地区分类，并支持按地点搜索。</p><div class="trip-list" id="tripList"></div><div class="row"><label>预设</label><select id="tripPreset" onchange="applyTripPreset()"><option value="">自定义</option><option value="黄山">黄山（安徽，山区）</option><option value="西安">西安（陕西）</option><option value="婺源">婺源（江西）</option><option value="三清山">三清山（江西，山区）</option><option value="新疆">新疆（旅行）</option><option value="东南沿海">东南沿海（海边）</option></select></div><div class="row"><label>名称</label><input id="tripName" placeholder="黄山之旅"></div><div class="row"><label>地区</label><input id="tripRegion" placeholder="黄山"></div><div class="row"><label>省份</label><input id="tripProvince" placeholder="安徽"></div><div class="row"><label>纬度</label><input id="tripLat" placeholder="30.13（可选）"></div><div class="row"><label>经度</label><input id="tripLon" placeholder="118.17（可选）"></div><div class="row"><label>开始</label><input id="tripStart" type="date"></div><div class="row"><label>结束</label><input id="tripEnd" type="date"></div><div class="actions"><button class="secondary" onclick="closeTripModal()">关闭</button><button onclick="saveTrip()">保存并重建</button></div></div></div></section>
 <section id="moveModal" class="trip-modal" aria-hidden="true"><div class="trip-card"><div class="head"><h2 id="moveTitle">移动到…</h2><button onclick="closeMoveModal()">×</button></div><div class="body"><p class="hint">把当前分类的全部照片移出，并加入目标分类 / 标签。照片原片不变，可在目标里看到。</p><select id="moveTarget" class="trip-select"></select><div class="actions"><button class="secondary" onclick="closeMoveModal()">取消</button><button onclick="confirmMoveCustom()">确认移动</button></div></div></div></section>
-<section id="settingsModal" class="trip-modal" aria-hidden="true"><div class="trip-card settings-card"><div class="head"><h2>设置</h2><button onclick="closeSettings()">×</button></div><div class="body"><div class="settings-list"><button onclick="location.href='/models.html'"><b>AI 与任务</b><span>识别服务开关 · 自动处理进度</span></button><button onclick="closeSettings();loadSourceView()"><b>来源管理</b><span>接入 / 停用照片目录（NAS、网盘、本机）</span></button><button onclick="closeSettings();openCatman()"><b>分类管理</b><span>排序 · 层级 · 首页显示 · 批量改名</span></button><button onclick="closeSettings();openUsersModal()"><b>成员账号</b><span>新增家人 / 访客 · 修改密码 · 重置</span></button><button onclick="closeSettings();openTasks()"><b>后台任务与内存护栏</b><span id="tasksEntrySub">预热 / 转码进度 · 防卡死开关</span></button><button onclick="runUpdateCheck(this)"><b>软件更新</b><span id="updateEntrySub">检查新版本 · 在线升级</span></button></div></div></div></section><section id="tasksModal" class="trip-modal" aria-hidden="true"><div class="trip-card tasks-card"><div class="head"><h2>后台任务与内存护栏</h2><button onclick="closeTasks()">×</button></div><div class="body">
+<section id="settingsModal" class="trip-modal" aria-hidden="true"><div class="trip-card settings-card"><div class="head"><h2>设置</h2><button onclick="closeSettings()">×</button></div><div class="body"><div class="settings-list"><button onclick="location.href='/models.html'"><b>AI 与任务</b><span>识别服务开关 · 自动处理进度</span></button><button onclick="closeSettings();loadSourceView()"><b>来源管理</b><span>接入 / 停用照片目录（NAS、网盘、本机）</span></button><button onclick="closeSettings();openCatman()"><b>分类管理</b><span>排序 · 层级 · 首页显示 · 批量改名</span></button><button onclick="closeSettings();openUsersModal()"><b>成员账号</b><span>新增家人 / 访客 · 修改密码 · 重置</span></button><button onclick="closeSettings();openTasks()"><b>后台任务与内存护栏</b><span id="tasksEntrySub">预热 / 转码进度 · 防卡死开关</span></button><button onclick="runUpdateCheck(this)"><b>软件更新</b><span id="updateEntrySub">检查新版本 · 在线升级</span></button><button onclick="toggleDevReload()"><b>开发模式 · 自动重载</b><span id="devReloadSub">当前：关闭（改动需手动重启）</span></button></div></div></div></section><section id="tasksModal" class="trip-modal" aria-hidden="true"><div class="trip-card tasks-card"><div class="head"><h2>后台任务与内存护栏</h2><button onclick="closeTasks()">×</button></div><div class="body">
 <div class="task-block"><div class="task-line"><b>整机内存</b><span id="resLine">读取中…</span></div><div class="res-bar"><i id="resBar"></i></div><div class="hint" id="resHint"></div></div>
 <div class="task-row"><div><b>缩略图自动预热</b><div class="sub" id="warmSub">—</div></div><label class="sw"><input type="checkbox" id="warmSw" onchange="setTaskCfg('warm_autorun_enabled',this.checked)"><span></span></label></div>
 <div class="task-row"><div><b>Log 视频自动转码</b><div class="sub" id="vcSub">—</div></div><label class="sw"><input type="checkbox" id="vcSw" onchange="setTaskCfg('videolc_autorun_enabled',this.checked)"><span></span></label></div>
@@ -2369,7 +2369,25 @@ async function openCatman(){
   await reloadCatman();
 }
 function closeCatman(){document.querySelector('#catmanModal').classList.remove('open');document.querySelector('#catmanModal').setAttribute('aria-hidden','true')}
-function openSettings(){const m=document.querySelector('#settingsModal');m.classList.add('open');m.setAttribute('aria-hidden','false');refreshUpdateEntry();refreshTasksEntry()}
+function openSettings(){const m=document.querySelector('#settingsModal');m.classList.add('open');m.setAttribute('aria-hidden','false');refreshUpdateEntry();refreshTasksEntry();refreshDevReload()}
+// 开发模式（server.py / static 改动后自动重新加载）：本机开发用，生产默认关闭
+function refreshDevReload(){
+  const el=document.getElementById('devReloadSub');if(!el)return;
+  fetch('/api/dev/reload').then(r=>r.json()).catch(()=>({enabled:false})).then(d=>{
+    el.textContent=d.enabled?'已开启：改动后自动重载':'当前：关闭（改动需手动重启）';
+  });
+}
+function toggleDevReload(){
+  fetch('/api/dev/reload').then(r=>r.json()).catch(()=>({enabled:false})).then(d=>{
+    fetch('/api/dev/reload',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({enabled:!d.enabled})})
+    .then(r=>r.json()).catch(()=>({enabled:false})).then(s=>{
+      alert(s.enabled?'已开启开发模式：代码或页面改动后约 4 秒自动重新加载。\n注意：会中断当前页面，正在跑的后台任务不受影响（服务侧继续跑）。'
+                      :'已关闭开发模式：代码改动不再自动重载，需手动重启服务。');
+      refreshDevReload();
+    });
+  });
+}
 // ===== 后台任务与内存护栏（2026-09-24）：设置 → 后台任务与内存护栏 =====
 let _tasksTimer=null;
 async function tasksAPI(url,body){const opt=body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{};const r=await fetch(url,opt);const t=await r.text();return t?JSON.parse(t):{}}

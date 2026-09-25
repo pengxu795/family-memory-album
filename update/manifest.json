@@ -1,8 +1,8 @@
 {
- "version": "1.0.9",
- "file": "family_memory_update_v1.0.9.zip",
- "md5": "90bd2854479805a5f3184772be0d1558",
- "size": 1415145,
- "notes": "修复视频预热：warm_pending_ids 先按索引比对缩略图缓存，只返回真正缺 480/1600 两档的视频（不再把全库 3900 多条整轮空转两小时，也不再和转码任务互抢解码资源）；缓存已齐时直接返回「没有待预热视频（缓存已齐）」",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/v1.0.9/family_memory_update_v1.0.9.zip"
+ "version": "1.0.10",
+ "file": "family_memory_update_v1.0.10.zip",
+ "md5": "5a27c17e988de7209fbdb35c8c41dbc3",
+ "size": 1410581,
+ "notes": "新增开发模式：server.py / 页面文件改动后自动重新加载（本机保存即生效，生产默认关闭，可在设置里开关）；新增 tools/release.py，一条命令走完「同步→脱敏→打包→manifest→打标签→GitHub Release」",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.10/family_memory_update_v1.0.10.zip"
 }

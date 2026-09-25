@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.9"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.10"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -11354,6 +11354,12 @@ class Handler(BaseHTTPRequestHandler):
                     result = vlm_autorun_config(
                         None if en is None else int(en),
                         None if iv is None else int(iv))
+                elif self.path == "/api/dev/reload":
+                    # 开发模式：server.py / static 改动后自动重新加载（生产默认关）
+                    on = body.get("enabled")
+                    if on is not None:
+                        set_setting("dev_reload", 1 if int(on) else 0)
+                    result = {"enabled": _dev_reload_enabled()}
                 elif self.path == "/api/vlm/run":
                     result = vlm_run("manual")
                 elif self.path == "/api/vlm/status":
@@ -11808,6 +11814,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Access-Control-Allow-Origin", "*"); self.end_headers()
             self.wfile.write(json.dumps({"text": get_setting("brand_text", "")}, ensure_ascii=False).encode()); return
+        if parsed.path == "/api/dev/reload":
+            # 开发模式开关状态（写入在 do_POST）；供设置面板显示
+            self.send_response(200); self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*"); self.end_headers()
+            self.wfile.write(json.dumps({"enabled": _dev_reload_enabled()},
+                                        ensure_ascii=False).encode()); return
         # token 已被上面公开路径消费完，摘掉避免干扰后续精确匹配路由
         _strip_token_param(self)
         parsed = urllib.parse.urlparse(self.path)
@@ -12176,6 +12188,66 @@ Handler.do_GET = _wrap_busy_503(Handler.do_GET)
 Handler.do_POST = _wrap_busy_503(Handler.do_POST)
 
 
+# ===== dev-reload：本机开发模式下，代码一改就自动重新加载（2026-09-25）=====
+# 生产（Docker / NAS）默认关闭，三种方式任一开启即可：
+#   1) 启动参数 --dev-reload；2) 环境变量 FM_DEV_RELOAD=1；3) 设置项 app_setting_v0.dev_reload=1（界面里可开关）。
+# 只盯 server.py 自身与 static/ 下的文件（不读内容，只比 mtime/size），__pycache__ 之类的噪声自动忽略。
+def _dev_reload_enabled() -> bool:
+    if "--dev-reload" in sys.argv:
+        return True
+    if os.environ.get("FM_DEV_RELOAD", "").strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    try:
+        if str(get_setting("dev_reload", "0")).strip().lower() in ("1", "true", "yes", "on"):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _dev_reload_fingerprint():
+    """指纹：本文件 + static/ 下所有文件的 (mtime_ns, size)。"""
+    fp = []
+    try:
+        st = os.stat(__file__)
+        fp.append(("__main__", st.st_mtime_ns, st.st_size))
+    except OSError:
+        pass
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+    try:
+        with os.scandir(root) as it:
+            for e in it:
+                try:
+                    st = e.stat()
+                except OSError:
+                    continue
+                fp.append((e.name, st.st_mtime_ns, st.st_size))
+    except OSError:
+        pass
+    return tuple(fp)
+
+
+def _dev_reload_loop():
+    """轮询指纹，变了就 execv 重跑自己（进程映像替换，端口 CLOEXEC 会自动释放）。"""
+    if not _dev_reload_enabled():
+        return
+    base = _dev_reload_fingerprint()
+    print("[dev-reload] 已开启：server.py / static 改动后自动重新加载", flush=True)
+    while True:
+        time.sleep(2.0)
+        cur = _dev_reload_fingerprint()
+        if cur == base:
+            continue
+        base = cur
+        time.sleep(2.0)        # 防抖：等编辑器/工具把文件写完，别半截就重载
+        print("[dev-reload] 检测到代码变化，重新加载…", flush=True)
+        time.sleep(0.5)        # 让在途请求收尾
+        try:
+            os.execv(sys.executable, [sys.executable] + list(sys.argv))
+        except Exception as exc:
+            print("[dev-reload] 重载失败: %s" % exc, flush=True)
+
+
 if __name__ == "__main__":
     # 2026-09-11 自查修复：端口占用防护（必须在 schema/WAL 初始化之前）。
     # 此前双开 .app 时，第二实例要先跑完建库/WAL/后台线程启动，最后才在
@@ -12263,4 +12335,6 @@ if __name__ == "__main__":
         request_queue_size = 128
         daemon_threads = True
     server = _Server((bind_host, PORT), Handler)
+    # 开发模式：代码改动自动重载（默认关，见 _dev_reload_loop）
+    threading.Thread(target=_dev_reload_loop, daemon=True, name="dev-reload").start()
     server.serve_forever()
