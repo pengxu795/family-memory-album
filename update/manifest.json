@@ -1,8 +1,8 @@
 {
- "version": "1.0.17",
- "file": "family_memory_update_v1.0.17.zip",
- "md5": "d54abeb90bb725b3c4b5979624f6ed89",
- "size": 1428333,
- "notes": "添加来源的路径不用再费心了：从 NAS 或电脑上复制到的常见路径写法（/homes/…、/Volumes/homes/…、/volume1/homes/…、smb:// 与 Windows 网络路径）都能直接粘贴使用，服务自动换算到自己的真实目录，用户不需要理解挂载关系；来源列表与移除确认框回显的也是用户填的那串路径；填错时的提示改成一句人话，不再暴露内部路径",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.17/family_memory_update_v1.0.17.zip"
+ "version": "1.0.18",
+ "file": "family_memory_update_v1.0.18.zip",
+ "md5": "9ab1ccfb90c4a83500a688354d7a6793",
+ "size": 1428967,
+ "notes": "数据来源列表上的路径也改成用户视角了：升级前添加的来源（库里只存了服务内路径）现在会自动回显成共享名写法（/photos/… → /homes/…），用户认得的路径在卡片上、移除确认框里、重复添加提示里三处保持一致；只有在确认是群晖共享时才翻译，其它部署原样显示",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.18/family_memory_update_v1.0.18.zip"
 }

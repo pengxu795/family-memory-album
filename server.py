@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.17"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.18"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -931,8 +931,9 @@ def source_list():
         "source_id": r["source_id"],
         "label": r["owner_label"] or os.path.basename(r["root_path"]) or r["root_path"],
         "root_path": r["root_path"],
-        # 用户视角路径：界面上展示的、以及移除确认框里用的都是它（老数据没有就退回 root_path）
-        "user_path": r["display_path"] or r["root_path"],
+        # 用户视角路径：界面上展示的、以及移除确认框里用的都是它。
+        # 老数据（升级前添加的）没有 display_path，就把它从服务内路径翻译回共享名写法
+        "user_path": r["display_path"] or _user_view_path(r["root_path"]),
         "source_type": r["source_type"],
         "last_scan_at": r["last_scan_at"],
         "enabled": bool(r["enabled"]),
@@ -1121,6 +1122,45 @@ def _source_path_hint(user_path):
     return "。请检查路径拼写，或用下面的「自动发现来源」让服务帮你找可用目录"
 
 
+# 回显给用户看的规范写法：共享名形式（Mac / 群晖 / Windows 上都能对上，粘回来也仍然有效）
+USER_VIEW_SHARE_PREFIX = "/homes"
+_SYNOLOGY_ROOTS_CACHE = None
+
+
+def _synology_share_roots():
+    """哪些服务侧根目录看起来是「群晖共享」（共享里有 @eaDir / #recycle 这两个群晖专属目录）。
+
+    唯一用途：决定界面回显时把服务内路径翻译成共享名写法是否成立。
+    判错的代价仅仅是「显示得不一样」，不参与扫描 / 校验 / 落库的任何判断。进程内只探一次。
+    """
+    global _SYNOLOGY_ROOTS_CACHE
+    if _SYNOLOGY_ROOTS_CACHE is None:
+        found = set()
+        for _src, dst in SOURCE_SHARE_ALIASES:
+            try:
+                if {"@eaDir", "#recycle"} & set(os.listdir(dst)):
+                    found.add(dst)
+            except OSError:
+                pass
+        _SYNOLOGY_ROOTS_CACHE = found
+    return _SYNOLOGY_ROOTS_CACHE
+
+
+def _user_view_path(p):
+    """服务内路径 → 用户视角路径，**只用于界面回显**（来源卡片 / 移除确认框 / 重复添加提示）。
+
+    为什么需要它（2026-09-29）：升级前添加的来源，库里只存了服务内路径；照搬显示等于又把
+    「容器挂载」这种实现细节摆到用户面前。这里翻译回共享名写法。只有确认是群晖共享时才翻译，
+    其它部署原样显示 —— 免得把人指到一个他机器上根本不存在的路径。
+    """
+    if not p:
+        return p
+    for root in _synology_share_roots():
+        if p == root or p.startswith(root + "/"):
+            return USER_VIEW_SHARE_PREFIX + p[len(root):]
+    return p
+
+
 def source_add(path, label="", source_type="local_folder", auto_scan=True):
     """添加一个数据来源目录；校验通过后立即落库并启动后台扫描，接口快速返回 scan_id。
 
@@ -1143,7 +1183,7 @@ def source_add(path, label="", source_type="local_folder", auto_scan=True):
     pl = path.lower()
     for row in roots:
         r, rl = row["root_path"], row["root_path"].lower()
-        shown = row["display_path"] or r          # 提示里回显用户认得的那个路径，不展示服务内路径
+        shown = row["display_path"] or _user_view_path(r)   # 提示里回显用户认得的那个路径
         if pl == rl:
             return {"error": f"这个文件夹已经是数据来源了：{shown}"}
         if pl.startswith(rl + os.sep):
