@@ -1,8 +1,8 @@
 {
- "version": "1.0.18",
- "file": "family_memory_update_v1.0.18.zip",
- "md5": "9ab1ccfb90c4a83500a688354d7a6793",
- "size": 1428967,
- "notes": "数据来源列表上的路径也改成用户视角了：升级前添加的来源（库里只存了服务内路径）现在会自动回显成共享名写法（/photos/… → /homes/…），用户认得的路径在卡片上、移除确认框里、重复添加提示里三处保持一致；只有在确认是群晖共享时才翻译，其它部署原样显示",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.18/family_memory_update_v1.0.18.zip"
+ "version": "1.0.19",
+ "file": "family_memory_update_v1.0.19.zip",
+ "md5": "5a7622467fcf30fdac6f4f138bd50333",
+ "size": 1430559,
+ "notes": "修复一个潜伏 bug：导入新照片时的自动垃圾过滤一直在静默失效（evidence_kind 不满足数据表 CHECK 约束被拒绝，异常又被吞掉），截图/下载目录等规则从未真正生效；同时把「已入库但没上墙」这件事说清楚——扫描完成后会写明几张被自动判定为截图等并归入已过滤、可在那里恢复，来源卡也会显示「墙上可见 N 张 / N 张在已过滤」，不再出现「2/2 项却一张看不到」还一声不吭的情况；重复添加已有来源的提示改为告诉用户直接点「立即扫描」即可",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.19/family_memory_update_v1.0.19.zip"
 }

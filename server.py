@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.18"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.19"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -759,6 +759,7 @@ def _check_new_files(roots_override=None, progress=None):
     con.commit()
     total_assets = con.execute("SELECT COUNT(*) FROM media_asset").fetchone()[0]
     con.close()
+    auto_filtered, auto_filtered_reasons = 0, {}
     if geo_new > 0:
         # 有新 GPS 入库：自动重建地理标签，保证地点立即可查
         try:
@@ -787,6 +788,12 @@ def _check_new_files(roots_override=None, progress=None):
                 _junk = _classify_import_junk(new_meta)
                 if _junk:
                     filter_add(_junk)
+                    # 2026-09-29：自动隐藏必须让用户知道，否则「加了来源却一张都看不到」
+                    # 会被当成软件坏了（实测：目录里是 macOS 截屏图片，2/2 入库但 0 张上墙，
+                    # 界面只说「新增入库 0 项」，用户以为来源是摆设）。
+                    auto_filtered = len({it["asset_id"] for it in _junk})
+                    for it in _junk:
+                        auto_filtered_reasons[it["reason"]] = auto_filtered_reasons.get(it["reason"], 0) + 1
             except Exception as _e:
                 print(f"[import-junk] 导入过滤判定失败(忽略): {_e}", flush=True)
         # 2026-09-16 新增：导入后增量富化（精确去重 sha256 / 画质 / 相似分组 / 择优 / 语义过滤）。
@@ -797,11 +804,40 @@ def _check_new_files(roots_override=None, progress=None):
                 threading.Thread(target=enrich_run, kwargs={"trigger": "import"}, daemon=True).start()
             except Exception as _e:
                 print(f"[enrich] 导入后触发失败(忽略): {_e}", flush=True)
-    result = {"scanned": scanned, "new_files": new_files, "indexed": indexed_new, "failed": failed, "total_assets": total_assets, "by_root": by_root, "read_only": True, "geo_new": geo_new}
+    # 2026-09-29：来源卡要能回答「为什么 2/2 项却一张都看不到」——已入库 ≠ 墙上可见
+    # （截图等会被自动规则归入已过滤）。**必须在上面那步导入过滤跑完之后**再算，
+    # 否则永远差一张（实测：先算得到 visible=1，过滤后真实可见是 0）。
+    try:
+        _c2 = sqlite3.connect(DB, timeout=30)
+        _c2.execute("PRAGMA busy_timeout=30000")
+        for _root, _info in by_root.items():
+            _row = _c2.execute("SELECT source_id FROM source WHERE root_path=?", (_root,)).fetchone()
+            if not _row:
+                continue
+            _vis = _c2.execute("""SELECT COUNT(*) FROM media_file mf
+                JOIN media_asset ma ON ma.asset_id = mf.asset_id
+                WHERE mf.source_id=? AND ma.asset_id NOT IN
+                      (SELECT asset_id FROM asset_filter_v0)""", (_row[0],)).fetchone()[0]
+            _idx = _c2.execute("SELECT COUNT(*) FROM media_file WHERE source_id=?",
+                               (_row[0],)).fetchone()[0]
+            _info["visible"] = _vis
+            _info["auto_filtered"] = max(0, _idx - _vis)
+        _c2.close()
+    except sqlite3.OperationalError as _e:
+        print(f"[scan] 来源可见数统计失败(忽略): {_e}", flush=True)
+    result = {"scanned": scanned, "new_files": new_files, "indexed": indexed_new, "failed": failed, "total_assets": total_assets, "by_root": by_root, "read_only": True, "geo_new": geo_new,
+              "auto_filtered": auto_filtered,
+              "auto_filtered_labels": sorted({FILTER_REASON_LABELS.get(r, r) for r in auto_filtered_reasons})}
     if progress is not None:
+        msg = f"完成：扫描 {scanned} 个文件，新增入库 {indexed_new} 项"
+        if auto_filtered:
+            labels = "、".join(result["auto_filtered_labels"])
+            msg += f"；其中 {auto_filtered} 张被自动判定为「{labels}」，归入「已过滤内容」（可在那里恢复）"
+        if failed:
+            msg += f"，失败 {len(failed)} 项"
         progress.update({"status": "done", "done": True, "scanned": scanned, "new_files": new_files,
                          "indexed": indexed_new, "failed": len(failed), "result": result,
-                         "message": f"完成：扫描 {scanned} 个文件，新增入库 {indexed_new} 项" + (f"，失败 {len(failed)} 项" if failed else "")})
+                         "message": msg})
     return result
 
 
@@ -924,10 +960,19 @@ def source_list():
     rows = con.execute("""
         SELECT s.source_id, s.owner_label, s.root_path, s.display_path, s.source_type, s.last_scan_at, s.enabled,
                s.total_files, s.indexed_count, s.failed_count,
-               (SELECT COUNT(*) FROM media_file mf WHERE mf.source_id = s.source_id) AS file_count
+               (SELECT COUNT(*) FROM media_file mf WHERE mf.source_id = s.source_id) AS file_count,
+               (SELECT COUNT(*) FROM media_file mf JOIN media_asset ma ON ma.asset_id = mf.asset_id
+                 WHERE mf.source_id = s.source_id AND ma.asset_id NOT IN
+                       (SELECT asset_id FROM asset_filter_v0)) AS visible_count
         FROM source s ORDER BY indexed_count DESC""").fetchall()
     con.close()
-    return {"sources": [{
+    out = []
+    for r in rows:
+        fc = r["file_count"] or 0
+        vc = r["visible_count"]
+        if vc is None:                      # 老库还没有 asset_filter_v0 表时按「全部可见」处理
+            vc = fc
+        out.append({
         "source_id": r["source_id"],
         "label": r["owner_label"] or os.path.basename(r["root_path"]) or r["root_path"],
         "root_path": r["root_path"],
@@ -937,13 +982,18 @@ def source_list():
         "source_type": r["source_type"],
         "last_scan_at": r["last_scan_at"],
         "enabled": bool(r["enabled"]),
-        "file_count": r["file_count"],
+        "file_count": fc,
         "total_files": r["total_files"] or 0,
         "indexed_count": r["indexed_count"] or 0,
         "failed_count": r["failed_count"] or 0,
+        # 2026-09-29：入库数 ≠ 墙上可见数（截图等会被自动规则归入已过滤）。
+        # 来源卡必须把这件事说清，否则「2/2 项却一张看不到」会被当成软件坏了。
+        "visible_count": vc,
+        "filtered_count": max(0, fc - vc),
         "available": os.path.isdir(r["root_path"]),
         "healthy": bool((r["indexed_count"] or 0) > 0),
-    } for r in rows]}
+        })
+    return {"sources": out}
 
 
 def _count_media_files(root, max_depth=3, cap=4000):
@@ -1185,7 +1235,7 @@ def source_add(path, label="", source_type="local_folder", auto_scan=True):
         r, rl = row["root_path"], row["root_path"].lower()
         shown = row["display_path"] or _user_view_path(r)   # 提示里回显用户认得的那个路径
         if pl == rl:
-            return {"error": f"这个文件夹已经是数据来源了：{shown}"}
+            return {"error": f"这个文件夹已经在来源里了：{shown}，不用重复添加 —— 有新照片时点它卡片上的「立即扫描」就会补进来"}
         if pl.startswith(rl + os.sep):
             return {"error": f"这个文件夹已经被现有来源包含：{shown}"}
         if rl.startswith(pl + os.sep):
@@ -8381,7 +8431,11 @@ def _classify_import_junk(new_meta):
         if "screenrecording" in fn_l or "录屏" in fn_l or "screen record" in fn_l:
             reasons.append("SCREEN_RECORDING_FILENAME")
         for rsn in dict.fromkeys(reasons):
-            items.append({"asset_id": aid, "reason": rsn, "evidence_kind": "rule",
+            # ★ evidence_kind 必须取自表约束 IN ('path','filename','visual','ocr','user')。
+            #   2026-09-29 发现这里曾写成 "rule" → INSERT 被 CHECK 约束拒绝，
+            #   而调用方把异常整个吞掉只打一行日志 → **导入时的自动垃圾过滤静默失效**
+            #   （截图等照常上墙，用户以为过滤坏了）。这两条规则都基于文件名/路径，用 'path'。
+            items.append({"asset_id": aid, "reason": rsn, "evidence_kind": "path",
                           "evidence_value": f"{fn}|{rp}", "confidence": 1.0,
                           "rule_version": "auto-junk-v1"})
     return items
