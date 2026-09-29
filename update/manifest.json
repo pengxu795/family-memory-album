@@ -1,8 +1,8 @@
 {
- "version": "1.0.23",
- "file": "family_memory_update_v1.0.23.zip",
- "md5": "e852dd3c54399c5b917086e18615a2df",
- "size": 1432078,
- "notes": "侧栏「来源」里现在也能看到刚添加、但照片全被自动判定（如截图）进已过滤内容的来源了：名字旁标注「N 张在已过滤」，点进去不再是空白的墙，会提示照片去哪了并附一条直达「已过滤内容」的链接；此前这类来源在侧栏整个消失，用户以为添加来源没生效",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.23/family_memory_update_v1.0.23.zip"
+ "version": "1.0.24",
+ "file": "family_memory_update_v1.0.24.zip",
+ "md5": "63a5380f72c4de9b4190ba396f3c5a69",
+ "size": 1432177,
+ "notes": "来源与侧栏彻底打通，不再有「加了却看不见」的死角：在已过滤内容里恢复照片、看图时恢复/移出、单张移入已过滤之后，左侧栏的来源分组和各类计数现在都会立即自动刷新，不用再手动刷新页面；此前只有加来源、扫描完成、删来源、批量恢复这几个入口会刷新，单张操作全部漏掉",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.24/family_memory_update_v1.0.24.zip"
 }
