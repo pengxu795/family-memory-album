@@ -1191,19 +1191,22 @@ function updateFocusCard() {
 }
 
 function formatFocusDate(t) {
-  // 拍摄时间（media_asset.capture_time）。三种形态：
+  // 拍摄时间（media_asset.capture_time）。四种形态：
   // 纯日期 "2026-07-30" → 只显示日期（以前 new Date 当 UTC 零点，东八区假显 08:00:00 am）
   // 完整 "2026-07-30T14:23:05" → 日期 + 时刻
+  // 日期精度被存成零点 "2026-05-04T00:00:00(+00:00)" → 只显示日期，不冒出 "00:00:00 am"
+  //   （time_precision=day 的照片时刻统一补成零点，那不是真实拍摄时刻）
   // 空/无效/全零占位（0000-00-00…）→ 时间待确认
   const s = String(t || '');
   if (!s || /^0000-/.test(s)) return '时间待确认';
   const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const zeroTime = /[T ]00:00:00(\+00:00|Z)?\s*$/.test(s);
   const d = new Date(dateOnly ? s + 'T00:00:00' : s);
   if (isNaN(d)) return '时间待确认';
   const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
   const day = String(d.getDate()).padStart(2, '0');
   const y = d.getFullYear();
-  if (dateOnly) return `${mon} ${day}, ${y}`;
+  if (dateOnly || zeroTime) return `${mon} ${day}, ${y}`;
   const h = String(d.getHours()).padStart(2, '0');
   const m = String(d.getMinutes()).padStart(2, '0');
   const sec = String(d.getSeconds()).padStart(2, '0');

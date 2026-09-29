@@ -38,8 +38,9 @@ REL = ROOT
 # 开发目录与公开仓同级：…/家庭回忆相册/mvp 与 …/家庭回忆相册/release/ 并列
 MVP = Path(os.environ.get("FM_MVP_DIR", str(ROOT.parent.parent / "mvp"))).resolve()
 
-# 每次发版必须带上来的文件（相对路径）。static/ 由脚本自动收进去，不用手写。
-DEFAULT_FILES = ["server.py", "static/library.html"]
+# 每次发版必须带上来的文件（相对路径）。static/ 由脚本**整目录**收进去（跳过 .bak/草稿），
+# 不用手写清单——2026-09-29 的教训：只列 library.html 漏掉 index.html，用户升了版 bug 原样还在。
+DEFAULT_FILES = ["server.py"]
 WORKER = "transcode_log_videos.py"
 
 # 公开仓红线：命中任何一条就中止（真名 / 内网 IP / 个人路径 / 口令 / 家庭坐标）
@@ -97,14 +98,23 @@ def sensitive_scan(files) -> bool:
 
 
 def sync_from_mvp(files, version):
-    """mvp → release：复制 + 脱敏 + 改版本号。"""
-    for rel in files:
+    """mvp → release：复制 + 脱敏 + 改版本号。static/ 整目录同步。"""
+    copy_list = list(files)
+    static_src = MVP / "static"
+    if static_src.is_dir():
+        for p in sorted(static_src.rglob("*")):
+            if p.is_file() and not is_junk(p.relative_to(MVP)):
+                rel = p.relative_to(MVP).as_posix()
+                if rel not in copy_list:
+                    copy_list.append(rel)
+    for rel in copy_list:
         src, dst = MVP / rel, REL / rel
         need(src.is_file(), "开发目录里没有 %s（FM_MVP_DIR=%s）" % (rel, MVP))
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, dst)
-        print("copy:", rel)
+    print("copy: %d 个文件（server.py + static/ 整目录）" % len(copy_list))
 
+    # 脱敏：代码与注释里的真实姓名（必须在打包/扫描前做）
     p = REL / "server.py"
     s = io.open(p, encoding="utf8").read()
     n = s.count("徐国庆")
@@ -115,6 +125,8 @@ def sync_from_mvp(files, version):
                       'APP_VERSION = "%s"' % version, s, count=1)
     need(cnt == 1, "server.py 里没找到唯一的 APP_VERSION 赋值，开发目录结构变了？")
     io.open(p, "w", encoding="utf8").write(s2)
+    print("version ->", version)
+    return copy_list
     print("version ->", version)
 
 
@@ -242,7 +254,7 @@ def main():
 
     ver, notes = a.version, a.notes
     files = DEFAULT_FILES + ([WORKER] if a.with_worker else [])
-    sync_from_mvp(files, ver)
+    files = sync_from_mvp(files, ver)
     if sensitive_scan(files):
         print("!! 敏感扫描命中可疑项，确认上面列出的行都是安全文案再继续")
         sys.exit(1)

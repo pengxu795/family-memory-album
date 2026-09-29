@@ -1,8 +1,8 @@
 {
- "version": "1.0.11",
- "file": "family_memory_update_v1.0.11.zip",
- "md5": "7687d9cffcc0c39ecdd19c1fbee92adb",
- "size": 1411748,
- "notes": "修复首页焦点卡片：只有日期的照片（零点占位）不再显示「00:00:00 am」，只显示日期",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.11/family_memory_update_v1.0.11.zip"
+ "version": "1.0.12",
+ "file": "family_memory_update_v1.0.12.zip",
+ "md5": "742f9bbb242e046f7b58f0589bf05fbb",
+ "size": 1411900,
+ "notes": "补齐发布脚本漏同步的 index.html：v1.0.11 的日期显示修复没进包，这次 static 整目录同步（脚本加固）",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.12/family_memory_update_v1.0.12.zip"
 }
