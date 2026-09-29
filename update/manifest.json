@@ -1,8 +1,8 @@
 {
- "version": "1.0.22",
- "file": "family_memory_update_v1.0.22.zip",
- "md5": "9f8c8bb0dfff9764eae2d78dd6bb071c",
- "size": 1431294,
- "notes": "已过滤内容的来源下拉里，来源名也从内部路径改成了用户认得的共享名写法（/photos/… → /homes/…），与来源卡片上的显示保持一致",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.22/family_memory_update_v1.0.22.zip"
+ "version": "1.0.23",
+ "file": "family_memory_update_v1.0.23.zip",
+ "md5": "e852dd3c54399c5b917086e18615a2df",
+ "size": 1432078,
+ "notes": "侧栏「来源」里现在也能看到刚添加、但照片全被自动判定（如截图）进已过滤内容的来源了：名字旁标注「N 张在已过滤」，点进去不再是空白的墙，会提示照片去哪了并附一条直达「已过滤内容」的链接；此前这类来源在侧栏整个消失，用户以为添加来源没生效",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.23/family_memory_update_v1.0.23.zip"
 }

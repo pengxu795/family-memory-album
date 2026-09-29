@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.22"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.23"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -3293,15 +3293,25 @@ def get_categories():
            WHERE {NH} GROUP BY p.person_id ORDER BY count DESC""")]
     # 来源别名：owner_label ↔ 显示名映射在 person_alias(kind='source')，代码零人名
     source_alias = _person_lexicon().get("source_aliases", {})
+    # 各来源「在已过滤内容」的资产数（2026-09-29）：来源刚添加、照片全被自动判定为
+    # 截图等进已过滤时，墙上 0 张 → 侧栏来源分组整个不显示它，用户以为添加没生效。
+    src_filtered = {}
+    for r in con.execute(
+        """SELECT mf.source_id, COUNT(DISTINCT f.asset_id) n
+           FROM asset_filter_v0 f JOIN media_file mf ON mf.asset_id=f.asset_id
+           GROUP BY mf.source_id"""):
+        src_filtered[r["source_id"]] = r["n"]
     sources = []
     for r in con.execute(
-        f"""SELECT s.owner_label,s.root_path,COUNT(DISTINCT mf.asset_id) count
+        f"""SELECT s.source_id, s.owner_label, s.root_path, COUNT(DISTINCT mf.asset_id) count
            FROM source s LEFT JOIN media_file mf USING(source_id)
            LEFT JOIN media_asset ma ON ma.asset_id=mf.asset_id
            WHERE ma.asset_id IS NULL OR {NH}
            GROUP BY s.source_id ORDER BY count DESC"""):
         raw = r["owner_label"] or Path(r["root_path"]).parent.name
-        sources.append({"display_name": source_alias.get(raw, raw), "source_value": raw, "count": r["count"]})
+        sources.append({"display_name": source_alias.get(raw, raw), "source_value": raw,
+                        "source_id": r["source_id"], "count": r["count"],
+                        "filtered_count": src_filtered.get(r["source_id"], 0)})
     total = con.execute(
         f"SELECT count(*) FROM media_asset ma WHERE {NH}").fetchone()[0]
     media_types = {r[0]: r[1] for r in con.execute(

@@ -199,6 +199,7 @@ body.dragging-asset{cursor:grabbing}
 #sideGroups .librow .lrname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #sideGroups .librow.l2 .lrname{white-space:normal;overflow:visible;text-overflow:clip;word-break:break-word;line-height:1.35}
 #sideGroups .librow .lrcount{flex:0 0 auto;color:#a3a3a0;font-size:10px;margin-left:6px}
+.lrfx{color:#b7791f;font-size:10px;margin-left:6px;white-space:nowrap}/* 2026-09-29 来源「N 张在已过滤」标记 */
 #sideGroups .librow .lractions{flex:0 0 auto;margin-left:6px;display:flex;align-items:center;gap:3px;opacity:.5;transition:opacity .15s}
 #sideGroups .librow:hover .lractions{opacity:1}
 #sideGroups .librow .lreye{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;margin-left:0;width:16px;height:16px;color:#131314;align-self:flex-start;margin-top:0}
@@ -1332,7 +1333,7 @@ function syncCategoryUI(cat,value,label){
   });
 }
 async function fetchJSONRetry(url,opts,ms,retries){let lastErr=null;for(let i=0;i<=retries;i++){const ctl=new AbortController();const t=setTimeout(()=>ctl.abort(),ms);try{const r=await fetch(url,{...opts,signal:ctl.signal});clearTimeout(t);return await r.json()}catch(e){clearTimeout(t);lastErr=e;console.warn(`[fetchRetry] ${url} 第${i+1}次失败:`,e.message)}}throw lastErr}
-async function category(cat,value,label){filterMode=false;similarMode=false;sourceMode=false;customMode=false;customPickMode=false;privacyMode=false;dailyMode=false;currentCat=cat;currentValue=value;currentLabel=label||getCategoryLabel(cat,value);sortOrder=document.querySelector('#orderSelect')?.value||sortOrder;syncCategoryUI(cat,value,currentLabel);grid.className='grid';notice.textContent='正在读取…';let d;try{d=await fetchJSONRetry('/api/category',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cat,value,order:sortOrder,quality:qFilter})},8000,2)}catch(e){notice.textContent='读取失败，点击重试';grid.innerHTML='<div class="empty" style="grid-column:1/-1;padding:60px 0;text-align:center;color:var(--muted)">加载失败：'+e.message+'<br><button onclick="category(currentCat,currentValue,currentLabel)" style="margin-top:14px;border:1px solid var(--line);background:#ffffff;border-radius:18px;padding:8px 18px;cursor:pointer">重试</button></div>';return}assets=d.assets||[];/*分类视图只显示可见资产(hidden=过滤表/相似折叠/回收站),与侧栏计数和 answer 口径一致;自定义分类(用户人工归属)与回收站保留全部*/if(cat!=='custom'&&cat!=='recycle')assets=assets.filter(a=>!a.hidden);if(cat==='latest'&&categoriesCache){categoriesCache.total=assets.length;renderSideGroups(categoriesCache)}/* 2026-09-29 修复：原来先往 notice 写「共 N 项 · 最新在前」，紧接着又无条件 notice.textContent='' 清空 → 那行提示永远不显示（死代码）。现在有 #brandCount 就只写它，没有才回落到 notice 提示。 */{const _bc=document.getElementById('brandCount');if(_bc){_bc.textContent=assets.length?`共 ${assets.length.toLocaleString()} 项`:'';_bc.hidden=!assets.length;notice.textContent=''}else{notice.textContent=(assets.length?`共 ${assets.length.toLocaleString()} 项 · `:'')+(sortOrder==='asc'?'最旧在前':'最新在前')}}draw()}
+async function category(cat,value,label){filterMode=false;similarMode=false;sourceMode=false;customMode=false;customPickMode=false;privacyMode=false;dailyMode=false;currentCat=cat;currentValue=value;currentLabel=label||getCategoryLabel(cat,value);sortOrder=document.querySelector('#orderSelect')?.value||sortOrder;syncCategoryUI(cat,value,currentLabel);grid.className='grid';notice.textContent='正在读取…';let d;try{d=await fetchJSONRetry('/api/category',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cat,value,order:sortOrder,quality:qFilter})},8000,2)}catch(e){notice.textContent='读取失败，点击重试';grid.innerHTML='<div class="empty" style="grid-column:1/-1;padding:60px 0;text-align:center;color:var(--muted)">加载失败：'+e.message+'<br><button onclick="category(currentCat,currentValue,currentLabel)" style="margin-top:14px;border:1px solid var(--line);background:#ffffff;border-radius:18px;padding:8px 18px;cursor:pointer">重试</button></div>';return}assets=d.assets||[];/*分类视图只显示可见资产(hidden=过滤表/相似折叠/回收站),与侧栏计数和 answer 口径一致;自定义分类(用户人工归属)与回收站保留全部*/if(cat!=='custom'&&cat!=='recycle')assets=assets.filter(a=>!a.hidden);if(cat==='latest'&&categoriesCache){categoriesCache.total=assets.length;renderSideGroups(categoriesCache)}/* 2026-09-29 修复：原来先往 notice 写「共 N 项 · 最新在前」，紧接着又无条件 notice.textContent='' 清空 → 那行提示永远不显示（死代码）。现在有 #brandCount 就只写它，没有才回落到 notice 提示。 */{const _bc=document.getElementById('brandCount');if(_bc){_bc.textContent=assets.length?`共 ${assets.length.toLocaleString()} 项`:'';_bc.hidden=!assets.length;notice.textContent=''}else{notice.textContent=(assets.length?`共 ${assets.length.toLocaleString()} 项 · `:'')+(sortOrder==='asc'?'最旧在前':'最新在前')}if(!assets.length&&cat==='member'){/* 2026-09-29：来源墙上 0 张时不再是白板——告诉用户照片在已过滤里，给直达入口 */const _s=(categoriesCache&&categoriesCache.sources||[]).find(x=>x.display_name===value);if(_s&&_s.filtered_count>0){notice.innerHTML='这个来源的照片暂时都进了「已过滤内容」（如被自动判定为截图等） · '+'<a href="#" onclick="filterSource=\''+_s.source_id+'\';loadFilterView();return false" '+'style="color:var(--accent);text-decoration:underline">去已过滤内容看这 '+_s.filtered_count+' 张</a>'}}}draw()}
 async function query(q){
   filterMode=false;similarMode=false;sourceMode=false;customMode=false;customPickMode=false;privacyMode=false;dailyMode=false;
   if(selectMode)exitSelectMode();
@@ -1608,7 +1609,8 @@ function buildSideGroups(c){
     }
   };
   // 来源项也走 place()：否则改 parent 后重渲染会被 push 回 source 组（拖了白拖）
-  (c.sources||[]).filter(s=>s.count>0).forEach(s=>place('source',s.display_name,{label:s.display_name,cat:'member',value:s.display_name,name:s.display_name,count:s.count},'source',0));
+  // 2026-09-29：墙上 0 张但已过滤里有的来源也要显示（filter 放宽），否则用户加完来源侧栏找不到，以为没生效
+  (c.sources||[]).filter(s=>s.count>0||s.filtered_count>0).forEach(s=>place('source',s.display_name,{label:s.display_name,cat:'member',value:s.display_name,name:s.display_name,count:s.count,fsuffix:(!s.count&&s.filtered_count)?`${s.filtered_count} 张在已过滤`:''},'source',0));
   (c.persons||[]).filter(p=>p.count>0).forEach(p=>place('person',p.person_id,{label:p.display_name,cat:'person',value:p.display_name,name:p.display_name,count:p.count},'person',1));
   (c.locations||[]).filter(l=>l.count>0&&l.region).forEach(l=>place('location',l.region,{label:l.region,cat:'location',value:l.region,name:l.region,count:l.count},'location',1));
   (c.scenes||[]).filter(s=>s.count>0).forEach(s=>place('scene',s.tag,{label:s.tag,cat:'scene',value:s.tag,name:s.tag,count:s.count},LIB_TAG_TO_GROUP[s.tag]||'other',1));
@@ -1684,7 +1686,7 @@ function renderSideGroups(c){
         const actions=[];
         if(grp._manage)actions.push(eyeBtn(grp._show));
         if(grp._manage)actions.push(delBtn());
-        b.innerHTML=`<span class="lreye">${actions[0]||''}</span><span class="lrname">${esc(grp.label)}</span><span class="lrcount"></span><span class="lractions">${actions.slice(1).join('')}</span>`;
+        b.innerHTML=`<span class="lreye">${actions[0]||''}</span><span class="lrname">${esc(grp.label)}${grp.fsuffix?`<span class="lrfx">· ${esc(grp.fsuffix)}</span>`:''}</span><span class="lrcount"></span><span class="lractions">${actions.slice(1).join('')}</span>`;
         if(grp.cat==='query'){b.dataset.query=grp.value}
         else{b.dataset.cat=grp.cat;b.dataset.value=grp.value;if(grp.name)b.dataset.name=grp.name;if(grp.label)b.dataset.label=(grp.label||'').split(' · ')[0]}
         attachRowHandlers(b,grp);
@@ -1747,7 +1749,7 @@ function renderSideGroups(c){
       const l2actions=[];
       if(t._manage)l2actions.push(eyeBtn(t._show));
       if(t._manage&&t.cat==='custom')l2actions.push(delBtn());
-      b.innerHTML=`<span class="lreye">${l2actions[0]||''}</span><span class="lrname">${esc(t.label)}</span><span class="lrcount"></span><span class="lractions">${l2actions.slice(1).join('')}</span>`;
+      b.innerHTML=`<span class="lreye">${l2actions[0]||''}</span><span class="lrname">${esc(t.label)}${t.fsuffix?`<span class="lrfx">· ${esc(t.fsuffix)}</span>`:''}</span><span class="lrcount"></span><span class="lractions">${l2actions.slice(1).join('')}</span>`;
       if(t.cat==='query'){b.dataset.query=t.value}
       else{b.dataset.cat=t.cat;b.dataset.value=t.value;if(t.name)b.dataset.name=t.name}
       b.dataset.label=t.name||(t.label||'').split(' · ')[0];
