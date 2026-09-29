@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.24"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.25"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -3302,11 +3302,14 @@ def get_categories():
            GROUP BY mf.source_id"""):
         src_filtered[r["source_id"]] = r["n"]
     sources = []
+    # ★ 可见性判断必须放进聚合内（CASE WHEN），不能写进 WHERE：
+    #   WHERE 会在分组前把「只有被过滤资产」的来源行整行剔掉，LEFT JOIN 的保留语义
+    #   被破坏 → 来源从侧栏消失（v1.0.23 就是这么写错的，被用户当场抓包「死功能」）。
     for r in con.execute(
-        f"""SELECT s.source_id, s.owner_label, s.root_path, COUNT(DISTINCT mf.asset_id) count
+        f"""SELECT s.source_id, s.owner_label, s.root_path,
+               COUNT(DISTINCT CASE WHEN ma.asset_id IS NULL OR {NH} THEN mf.asset_id END) count
            FROM source s LEFT JOIN media_file mf USING(source_id)
            LEFT JOIN media_asset ma ON ma.asset_id=mf.asset_id
-           WHERE ma.asset_id IS NULL OR {NH}
            GROUP BY s.source_id ORDER BY count DESC"""):
         raw = r["owner_label"] or Path(r["root_path"]).parent.name
         sources.append({"display_name": source_alias.get(raw, raw), "source_value": raw,

@@ -1,8 +1,8 @@
 {
- "version": "1.0.24",
- "file": "family_memory_update_v1.0.24.zip",
- "md5": "63a5380f72c4de9b4190ba396f3c5a69",
- "size": 1432177,
- "notes": "来源与侧栏彻底打通，不再有「加了却看不见」的死角：在已过滤内容里恢复照片、看图时恢复/移出、单张移入已过滤之后，左侧栏的来源分组和各类计数现在都会立即自动刷新，不用再手动刷新页面；此前只有加来源、扫描完成、删来源、批量恢复这几个入口会刷新，单张操作全部漏掉",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.24/family_memory_update_v1.0.24.zip"
+ "version": "1.0.25",
+ "file": "family_memory_update_v1.0.25.zip",
+ "md5": "577a9ca396c394c192a7980c49a2c4fb",
+ "size": 1432426,
+ "notes": "修复 v1.0.23 引入的一个隐蔽问题：侧栏来源分组的可见数统计把过滤条件写在了分组前的 WHERE 里，导致「照片全部进了已过滤内容」的来源在侧栏仍然不显示（LEFT JOIN 的保留语义被 WHERE 破坏）——正是这次要修的场景本身。现在改为在聚合内部用 CASE 判断可见性，来源行永远保留；本机用全被过滤的真实来源实测通过",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.25/family_memory_update_v1.0.25.zip"
 }
