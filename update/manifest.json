@@ -1,8 +1,8 @@
 {
- "version": "1.0.19",
- "file": "family_memory_update_v1.0.19.zip",
- "md5": "5a7622467fcf30fdac6f4f138bd50333",
- "size": 1430559,
- "notes": "修复一个潜伏 bug：导入新照片时的自动垃圾过滤一直在静默失效（evidence_kind 不满足数据表 CHECK 约束被拒绝，异常又被吞掉），截图/下载目录等规则从未真正生效；同时把「已入库但没上墙」这件事说清楚——扫描完成后会写明几张被自动判定为截图等并归入已过滤、可在那里恢复，来源卡也会显示「墙上可见 N 张 / N 张在已过滤」，不再出现「2/2 项却一张看不到」还一声不吭的情况；重复添加已有来源的提示改为告诉用户直接点「立即扫描」即可",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.19/family_memory_update_v1.0.19.zip"
+ "version": "1.0.20",
+ "file": "family_memory_update_v1.0.20.zip",
+ "md5": "a1d209f4b8154c4d204664dc264f6730",
+ "size": 1430169,
+ "notes": "来源卡上的「墙上可见 / 在已过滤」文案排版修正（加上分隔、不再是刺眼红色），与上一版配合使用",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.20/family_memory_update_v1.0.20.zip"
 }
