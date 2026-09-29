@@ -109,6 +109,7 @@
     display: flex; align-items: stretch;
     font-size: 14px; color: #3a3a36; line-height: 1.5;
     text-align: left;
+    background: transparent;   /* 竖线+悬浮文字，不吃 ui.css 的卡片白底（否则照片下方糊出白块） */
     opacity: 0; pointer-events: none;
     transition: opacity .4s ease, transform .4s ease;
   }
@@ -426,7 +427,7 @@
   }
 </style>
 <link rel="stylesheet" href="/theme.css?v=06">
-<link rel="stylesheet" href="/ui.css?v=2">
+<link rel="stylesheet" href="/ui.css?v=3">
 </head>
 <body>
 

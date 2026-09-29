@@ -22,8 +22,10 @@
   transition:border-color .15s ease-out, background .15s ease-out !important;
 }
 
-/* 白面（.add-card / .empty 本来就是透明或虚线占位，不强制白底） */
-.srccard, .cand, .card, .custom-card, .hero, .focus-card, .help-card, .disclosure{
+/* 白面（.add-card / .empty 本来就是透明或虚线占位，不强制白底）
+   ★ .focus-card 不在此列（2026-09-29）：它是首页照片墙的「竖线+悬浮文字」，
+     白底会在照片下方糊出一个生硬的白色渐变块，必须保持透明 */
+.srccard, .cand, .card, .custom-card, .hero, .help-card, .disclosure{
   background:#fff !important;
 }
 

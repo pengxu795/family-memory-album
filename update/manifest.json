@@ -1,8 +1,8 @@
 {
- "version": "1.0.12",
- "file": "family_memory_update_v1.0.12.zip",
- "md5": "742f9bbb242e046f7b58f0589bf05fbb",
- "size": 1411900,
- "notes": "补齐发布脚本漏同步的 index.html：v1.0.11 的日期显示修复没进包，这次 static 整目录同步（脚本加固）",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.12/family_memory_update_v1.0.12.zip"
+ "version": "1.0.13",
+ "file": "family_memory_update_v1.0.13.zip",
+ "md5": "e65201f4458bedbf96cc07bbe5a552ec",
+ "size": 1412109,
+ "notes": "修复首页焦点卡片：去掉 ui.css 误加的白色卡片底，恢复「竖线+悬浮文字」通透样式（不再有生硬白块）",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.13/family_memory_update_v1.0.13.zip"
 }
