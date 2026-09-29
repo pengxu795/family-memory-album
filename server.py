@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.20"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.21"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -8324,20 +8324,40 @@ def media_gate_allows(handler, asset_id):
         return (user or {}).get("role") in ("admin", "family")
     return True
 
-def get_filter_list(order='desc'):
+def get_filter_list(order='desc', source=None):
     """过滤表完整清单（管理页用）：每资产聚合全部命中原因。
-    order: 'desc' 最新在前（默认），'asc' 最旧在前。"""
+    order: 'desc' 最新在前（默认），'asc' 最旧在前。
+    source: 可选来源 source_id —— 只返回该来源下被过滤的资产。
+    2026-09-29 加 source 参数：已过滤列表上千张时靠滚动找不到目标，
+    用户要求「按来源筛选」。返回值始终带 sources 汇总（各来源已过滤计数），
+    供前端下拉使用，与是否传 source 无关。"""
     con = sqlite3.connect(DB, timeout=10)
     con.row_factory = sqlite3.Row
+    # asset → 来源映射（一个 asset 归属一个来源；异常多行时取第一个）
+    asset_src = {}
+    for r in con.execute("SELECT DISTINCT asset_id, source_id FROM media_file"):
+        asset_src.setdefault(r["asset_id"], r["source_id"])
+    # 来源显示名：用户视角路径优先（display_path 即 /homes/… 形态）
+    src_name = {}
+    for r in con.execute("SELECT source_id, owner_label, display_path, root_path FROM source"):
+        src_name[r["source_id"]] = r["display_path"] or r["root_path"] or r["owner_label"] or r["source_id"]
     rows = con.execute("""SELECT f.asset_id, f.filter_reason, f.evidence_kind, f.confidence,
         ma.capture_time, ma.media_type FROM asset_filter_v0 f
         LEFT JOIN media_asset ma USING(asset_id)""").fetchall()
     con.close()
     assets = {}
+    per_source = {}  # source_id -> set(asset_id)：按资产数计数，不是按过滤行数（一个资产常有多条 reason 行）
     for r in rows:
-        a = assets.setdefault(r["asset_id"], {
-            "id": r["asset_id"], "time": r["capture_time"],
-            "type": r["media_type"] or "photo", "reasons": [], "conf": 0.0})
+        aid = r["asset_id"]
+        sid = asset_src.get(aid)
+        if sid:
+            per_source.setdefault(sid, set()).add(aid)
+        if source and sid != source:
+            continue
+        a = assets.setdefault(aid, {
+            "id": aid, "time": r["capture_time"],
+            "type": r["media_type"] or "photo", "source_id": sid,
+            "source_name": src_name.get(sid) or ("（已移除的来源）" if sid else ""), "reasons": [], "conf": 0.0})
         a["reasons"].append({
             "reason": r["filter_reason"],
             "label": FILTER_REASON_LABELS.get(r["filter_reason"], r["filter_reason"]),
@@ -8345,7 +8365,9 @@ def get_filter_list(order='desc'):
         a["conf"] = max(a["conf"], r["confidence"] or 0.0)
     reverse = str(order).lower() != 'asc'
     out = sorted(assets.values(), key=lambda x: x["time"] or "", reverse=reverse)
-    return {"assets": out, "total": len(out)}
+    src_briefs = [{"source_id": k, "name": src_name.get(k) or "（已移除的来源）", "count": len(v)}
+                  for k, v in sorted(per_source.items(), key=lambda kv: -len(kv[1]))]
+    return {"assets": out, "total": len(out), "sources": src_briefs}
 
 def filter_add(items):
     """加入过滤表（手动移出墙面 / Vision 批量导入）。
@@ -12262,7 +12284,7 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path == "/api/filter/count":
                     result = get_filter_count()
                 elif self.path == "/api/filter/list":
-                    result = get_filter_list(body.get("order", "desc"))
+                    result = get_filter_list(body.get("order", "desc"), body.get("source"))
                 elif self.path == "/api/filter/add":
                     items = body.get("items") or [body]
                     result = filter_add(items)

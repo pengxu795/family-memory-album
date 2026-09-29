@@ -1,8 +1,8 @@
 {
- "version": "1.0.20",
- "file": "family_memory_update_v1.0.20.zip",
- "md5": "a1d209f4b8154c4d204664dc264f6730",
- "size": 1430169,
- "notes": "来源卡上的「墙上可见 / 在已过滤」文案排版修正（加上分隔、不再是刺眼红色），与上一版配合使用",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.20/family_memory_update_v1.0.20.zip"
+ "version": "1.0.21",
+ "file": "family_memory_update_v1.0.21.zip",
+ "md5": "aea380f5e1be0c7e4973b63a467169eb",
+ "size": 1431288,
+ "notes": "已过滤内容支持按来源筛选：上千张已过滤的照片不用再靠滚动找了，工具条上新增来源下拉（带各来源数量），选中即只看该来源；单张恢复后来源计数即时更新，筛选状态下恢复按钮文案改为「恢复当前筛选」，避免误恢复全部",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.21/family_memory_update_v1.0.21.zip"
 }
