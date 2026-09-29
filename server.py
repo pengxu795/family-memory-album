@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.21"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.22"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -8337,10 +8337,12 @@ def get_filter_list(order='desc', source=None):
     asset_src = {}
     for r in con.execute("SELECT DISTINCT asset_id, source_id FROM media_file"):
         asset_src.setdefault(r["asset_id"], r["source_id"])
-    # 来源显示名：用户视角路径优先（display_path 即 /homes/… 形态）
+    # 来源显示名：用户视角路径优先（display_path 即 /homes/… 形态）。
+    # ★ 必须过 _user_view_path：老来源 display_path 为 NULL 时兜底 root_path 是
+    #   内部形态（/photos/…），直接回显违反「界面只出现用户视角」铁律（v1.0.21 漏了这步）。
     src_name = {}
     for r in con.execute("SELECT source_id, owner_label, display_path, root_path FROM source"):
-        src_name[r["source_id"]] = r["display_path"] or r["root_path"] or r["owner_label"] or r["source_id"]
+        src_name[r["source_id"]] = _user_view_path(r["display_path"] or r["root_path"] or r["owner_label"] or r["source_id"])
     rows = con.execute("""SELECT f.asset_id, f.filter_reason, f.evidence_kind, f.confidence,
         ma.capture_time, ma.media_type FROM asset_filter_v0 f
         LEFT JOIN media_asset ma USING(asset_id)""").fetchall()
