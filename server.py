@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.16"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.17"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -860,6 +860,12 @@ def _ensure_source_schema_impl(con):
         except Exception:
             pass  # 列已存在
     try:
+        # 2026-09-29：display_path = 用户添加来源时填的那串路径（用户视角），
+        # 界面一律回显它；root_path 保持服务内真实路径不动（扫描/校验都用它）。
+        con.execute("ALTER TABLE source ADD COLUMN display_path TEXT")
+    except Exception:
+        pass  # 列已存在
+    try:
         # 用实际 media_file 数量回填 indexed_count，避免旧数据全部显示 0/0
         con.execute("""UPDATE source SET indexed_count = COALESCE((SELECT COUNT(*) FROM media_file mf WHERE mf.source_id = source.source_id), 0)
                        WHERE COALESCE(indexed_count, 0) = 0""")
@@ -916,7 +922,7 @@ def source_list():
     con.row_factory = sqlite3.Row
     _ensure_source_schema(con)
     rows = con.execute("""
-        SELECT s.source_id, s.owner_label, s.root_path, s.source_type, s.last_scan_at, s.enabled,
+        SELECT s.source_id, s.owner_label, s.root_path, s.display_path, s.source_type, s.last_scan_at, s.enabled,
                s.total_files, s.indexed_count, s.failed_count,
                (SELECT COUNT(*) FROM media_file mf WHERE mf.source_id = s.source_id) AS file_count
         FROM source s ORDER BY indexed_count DESC""").fetchall()
@@ -925,6 +931,8 @@ def source_list():
         "source_id": r["source_id"],
         "label": r["owner_label"] or os.path.basename(r["root_path"]) or r["root_path"],
         "root_path": r["root_path"],
+        # 用户视角路径：界面上展示的、以及移除确认框里用的都是它（老数据没有就退回 root_path）
+        "user_path": r["display_path"] or r["root_path"],
         "source_type": r["source_type"],
         "last_scan_at": r["last_scan_at"],
         "enabled": bool(r["enabled"]),
@@ -996,85 +1004,167 @@ def _start_scan_job(source_id, root_path):
     return scan_id
 
 
-# ★ 群晖 homes 共享的主机侧前缀（公共前缀-无用户名）：只认 /Volumes|/volume1 + homes/
-#   这种**不带用户名**的通用写法；带用户名的路径才属于个人路径红线。
-#   发布扫描器靠「公共前缀-无用户名」这个标记放行下面这一行，别拿它去放行别的行。
-SYN_HOME_HOST_PREFIXES = ("/volumes/homes/", "/volume1/homes/")   # 公共前缀-无用户名
-SYN_HOME_CONTAINER_ROOT = "/photos/"
+# ============ 来源路径归一化：用户视角 → 服务视角 ============
+# 产品要求（2026-09-29 xupeng 明确）：「路径不要给客户搞复杂，从 NAS 上复制过来就能用」。
+# 让用户去理解「容器挂载」本身就是设计错误 —— 路径形态的差异（Mac 挂载点 / 群晖卷路径 /
+# 共享名 / SMB / UNC / Windows 盘符）全部在本模块吃掉。用户在界面上只看见自己填的那串路径。
+#
+# 服务侧真实照片根目录（部署时把任意磁盘/共享挂到这些位置，docker-compose.yml 里就是这么示例的）
+SOURCE_ROOT_CANDIDATES = ("/photos", "/pictures", "/data/photos")
+
+# 用户侧常见写法 → 服务侧根目录（只在原样路径不存在时才启用）
+#   Mac 上挂载出来的 NAS 共享:      /Volumes/homes/<账号>/...
+#   群晖 File Station 复制的路径:   /volume1/…/homes/<账号>/...
+#   共享名写法:                     /homes/<账号>/...
+# 这里只出现「共享名」这一级公共前缀，绝不带账号名 —— 账号名属个人路径，不进代码。
+# 发布扫描器靠「公共前缀-无用户名」这个标记放行下面几行，别拿它去放行别的行。
+SOURCE_SHARE_ALIASES = (
+    ("/volumes/homes", "/photos"),   # 公共前缀-无用户名
+    ("/volume1/homes", "/photos"),   # 公共前缀-无用户名
+    ("/homes",         "/photos"),   # 公共前缀-无用户名
+)
+
+
+def _strip_net_path(s):
+    """把 SMB / UNC / Windows 写法归一成 /share/... 形式，返回 (路径, 是否剥掉了主机名)。
+
+    smb://NAS/homes/x  →  /homes/x
+    \\\\NAS\\homes\\x     →  /homes/x
+    //NAS/homes/x      →  /homes/x
+    D:\\照片\\x          →  /照片/x
+    """
+    s = (s or "").strip().strip('"').strip("'")
+    had_scheme = False
+    low = s.lower()
+    for pfx in ("smb://", "cifs://", "afp://", "sftp://", "ftp://", "file://"):
+        if low.startswith(pfx):
+            s, had_scheme = s[len(pfx):], True
+            break
+    if s.startswith("\\\\") or s.startswith("//"):
+        segs = [x for x in s.replace("\\", "/").split("/") if x]
+        return "/" + "/".join(segs[1:]), True       # 第一段是主机名 / NAS 名，服务不关心
+    if "\\" in s:
+        segs = [x for x in s.split("\\") if x]
+        if segs and re.fullmatch(r"[A-Za-z]:", segs[0]):
+            segs = segs[1:]                          # Windows 盘符没有共享语义，丢掉
+        return "/" + "/".join(segs), False
+    if had_scheme:
+        segs = [x for x in s.split("/") if x]
+        return "/" + "/".join(segs[1:]), True
+    return s, False
+
+
+def _normalize_source_path(user_path):
+    """把用户填的路径换算成服务内**真实存在**的目录。返回 (服务内路径 or None, 备注 or None)。
+
+    三种输入都认：
+      ① 服务内路径（/photos/...）          → 原样用
+      ② 常见 NAS 写法（Mac 挂载/卷路径/共享名）→ 按 SOURCE_SHARE_ALIASES 映射后校验
+      ③ 其它写法（别的共享名、主机名层）    → 逐层剥前缀后到真实照片根目录下找
+
+    铁律：一律只认「os.path.isdir 为真」的候选。换算不出来就返回 None 让上层报错，
+    绝不擅自把用户指到另一个目录去 —— 指错目录比报错更糟。
+    """
+    raw = (user_path or "").strip().rstrip("/")
+    if not raw:
+        return None, None
+    if raw.startswith("~"):
+        raw = os.path.expanduser(raw)
+    net_path, stripped_host = _strip_net_path(raw)
+    # macOS 文件系统不区分大小写：/volumes 与 /Volumes 是同一目录，但字符串不同会让库内路径分裂成两套
+    if net_path.startswith("/volumes/"):
+        net_path = "/Volumes/" + net_path[len("/volumes/"):]
+    if not net_path.startswith("/"):
+        net_path = "/" + net_path
+    if os.path.isdir(net_path):
+        return os.path.abspath(net_path), ("已按网络路径识别" if stripped_host else None)
+    parts = [p for p in net_path.split("/") if p not in ("", ".")]
+    if not parts:
+        return None, None
+    canonical = "/" + "/".join(parts)                 # ★ 保留用户原始大小写，只拿小写副本去比前缀
+    low = canonical.lower()
+    # ① 常见共享名 / 挂载点映射（确定性规则，优先）
+    for src, dst in SOURCE_SHARE_ALIASES:
+        if low == src or low.startswith(src + "/"):
+            cand = dst + canonical[len(src):]
+            if os.path.isdir(cand):
+                return cand, None
+            break                                     # 命中别名但目标不存在 → 交给下面的兜底
+    # ② 兜底：剥掉 1~3 层前缀（主机名 / 共享名 / 账号名都是服务不关心的层），
+    #    在真实照片根目录下找。只接受**唯一命中**，多个命中宁可不猜。
+    roots = [r for r in SOURCE_ROOT_CANDIDATES if os.path.isdir(r)]
+    hits = []
+    for i in range(1, max(1, min(len(parts) - 1, 4))):
+        rel = "/".join(parts[i:])
+        for r in roots:
+            cand = r + "/" + rel
+            if os.path.isdir(cand) and cand not in hits:
+                hits.append(cand)
+    if len(hits) == 1:
+        return hits[0], None
+    return None, None
+
+
+def _source_path_hint(user_path):
+    """填错路径时的一句话提示：只用用户看得见的东西说话，不讲挂载原理。"""
+    roots = [r for r in SOURCE_ROOT_CANDIDATES if os.path.isdir(r)]
+    if roots:
+        names = []
+        try:
+            names = sorted(e for e in os.listdir(roots[0])
+                           if not e.startswith((".", "@", "#")))[:5]
+        except OSError:
+            pass
+        tail = f"，下面有：{'、'.join(names)}" if names else ""
+        return ("。请在文件管理器里打开要添加的文件夹、复制它的完整路径再粘贴"
+                f"（本服务可访问的照片目录是 {roots[0]}{tail}）")
+    return "。请检查路径拼写，或用下面的「自动发现来源」让服务帮你找可用目录"
 
 
 def source_add(path, label="", source_type="local_folder", auto_scan=True):
-    """添加一个数据来源目录；校验通过后立即落库并启动后台扫描，接口快速返回 scan_id。"""
-    raw_path = path.strip().rstrip("/")
-    path = os.path.expanduser(raw_path)
-    # macOS 文件系统不区分大小写：/volumes 与 /Volumes 是同一目录，但字符串不同会让库内路径分裂成两套
-    if path.startswith("/volumes/"):
-        path = "/Volumes/" + path[len("/volumes/"):]
-    path = os.path.abspath(path)
-    if not os.path.isdir(path):
-        # 2026-09-29：报错要「会教人」。三种典型填错都能给出可直接复制的建议：
-        #   电脑挂载路径 / 群晖内部路径  ← 容器里都看不到，换算成容器内路径并**验证存在**才给
-        #   其它                        ← 退回「列出容器里实际可见的照片根目录」
-        low = raw_path.lower()
-        cand = lead = hint = None          # ★ 三个都要先置 None：完全无关的路径要走到「列出可见根目录」兜底
-        for hp in SYN_HOME_HOST_PREFIXES:
-            if low.startswith(hp):
-                cand = SYN_HOME_CONTAINER_ROOT + raw_path[len(hp):]
-                lead = ("你填的是电脑上挂载出来的路径，本服务跑在容器里看不到它"
-                        if hp.startswith("/volumes/") else
-                        "这是群晖的内部路径，本服务（容器）里没有 /volume1")
-                break
-        if cand is None and low.startswith("/volume1/"):
-            hint = "（这是群晖内部路径，Mac 上请改用挂载路径 /Volumes/...）"
-        elif cand is None and low.startswith("/volumes/"):
-            hint = "（/Volumes 是电脑本机的挂载点，本服务（容器）里没有它）"
-        if cand and os.path.isdir(cand):
-            hint = f"（{lead}；容器内对应的是 {cand}，已验证存在 —— 换成这个再点一次即可）"
-        elif cand:
-            hint = f"（{lead}；容器内对应路径 {cand} 也不存在）"
-        elif hint is None:
-            for root in ("/photos", "/pictures", "/data/photos"):
-                if not os.path.isdir(root):
-                    continue
-                try:
-                    tops = sorted(e for e in os.listdir(root)
-                                  if not e.startswith((".", "@")))[:6]
-                except OSError:
-                    continue
-                if tops:
-                    hint = (f"（本服务（容器）里可见的照片根目录是 {root}，下一层有："
-                            f"{'、'.join(tops)} …；请填容器内路径，例如 {root}/<用户名>/...）")
-                    break
-        return {"error": f"目录不存在或无法访问：{path}{hint}"}
+    """添加一个数据来源目录；校验通过后立即落库并启动后台扫描，接口快速返回 scan_id。
+
+    路径形态差异由 _normalize_source_path() 自动吃掉：用户从 NAS / 电脑上复制到什么路径，
+    粘进来就能用。返回体里 user_path = 用户填的原样（界面上回显给用户看），
+    root_path = 服务内真实路径（扫描用，界面上不展示）。
+    """
+    user_path = (path or "").strip().rstrip("/")
+    if not user_path:
+        return {"error": "请填写来源目录路径"}
+    path, _note = _normalize_source_path(user_path)
+    if not path:
+        return {"error": f"这个路径服务里访问不到：{user_path}{_source_path_hint(user_path)}"}
     con = sqlite3.connect(DB, timeout=60)
     con.execute("PRAGMA busy_timeout=60000")
     con.row_factory = sqlite3.Row
     _ensure_source_schema(con)
-    roots = [r[0] for r in con.execute("SELECT root_path FROM source")]
+    roots = [dict(r) for r in con.execute("SELECT root_path, display_path FROM source")]
     con.close()
     pl = path.lower()
-    for r in roots:
-        rl = r.lower()
+    for row in roots:
+        r, rl = row["root_path"], row["root_path"].lower()
+        shown = row["display_path"] or r          # 提示里回显用户认得的那个路径，不展示服务内路径
         if pl == rl:
-            return {"error": "该目录已经是数据来源"}
+            return {"error": f"这个文件夹已经是数据来源了：{shown}"}
         if pl.startswith(rl + os.sep):
-            return {"error": f"目录已被现有来源覆盖：{r}"}
+            return {"error": f"这个文件夹已经被现有来源包含：{shown}"}
         if rl.startswith(pl + os.sep):
-            return {"error": f"该目录是现有来源 {r} 的上级目录，请先在来源管理中移除旧来源再添加"}
+            return {"error": f"这个文件夹是现有来源 {shown} 的上级目录，请先移除旧来源再添加"}
     found = _count_media_files(path)
     if found == 0:
-        return {"error": "该目录（3 层深度内）没有找到照片或视频文件"}
+        return {"error": f"这个文件夹里（3 层深度内）没有找到照片或视频：{user_path}"}
+    label = (label or "").strip() or os.path.basename(user_path) or os.path.basename(path) or path
     source_id = "src_" + hashlib.sha256(path.encode("utf-8")).hexdigest()[:24]
     con = sqlite3.connect(DB, timeout=60)
     con.execute("PRAGMA busy_timeout=60000")
-    con.execute("""INSERT INTO source (source_id, family_id, owner_label, root_path, source_type, read_only, last_scan_at, enabled, total_files, indexed_count, failed_count)
-        VALUES (?,?,?,?,?,1,?,1,?,?,?)""",
-        (source_id, "family_default", (label or "").strip() or os.path.basename(path) or path,
-         path, source_type, now_iso(), found, 0, 0))
+    con.execute("""INSERT OR IGNORE INTO source (source_id, family_id, owner_label, root_path, display_path, source_type, read_only, last_scan_at, enabled, total_files, indexed_count, failed_count)
+        VALUES (?,?,?,?,?,?,1,?,1,?,?,?)""",
+        (source_id, "family_default", label, path, user_path or path,
+         source_type, now_iso(), found, 0, 0))
     con.commit()
     con.close()
     scan_id = _start_scan_job(source_id, path) if auto_scan else None
-    return {"source_id": source_id, "root_path": path, "label": (label or "").strip() or os.path.basename(path),
+    return {"source_id": source_id, "root_path": path, "user_path": user_path or path, "label": label,
             "media_files_found": found, "scan_id": scan_id, "status": "scanning" if scan_id else "added"}
 
 
