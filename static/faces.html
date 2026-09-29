@@ -419,6 +419,10 @@ function bindRectSelect(container, applySel){
   };
 }
 function renderPoolBar(){
+  // 2026-09-29 修复：原实现直接 appendChild，不先摘旧的 → 切换「已确认人脸 / 候选池」
+  // 每来回一次就在页面底部叠一条悬浮条（三个调用点：toggleConfirmed / backToPool /
+  // 首次加载）。先移除同 id 旧节点，保证幂等。
+  const _old=document.getElementById('poolBar');if(_old)_old.remove();
   const bar=document.createElement('div');bar.className='pool-bar';bar.id='poolBar';
   if(confirmedMode){
     bar.innerHTML=`<div class="status">已确认人脸 · 勾选认领错的，移除后回到候选池重新判定</div>

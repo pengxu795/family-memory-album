@@ -1328,7 +1328,7 @@ function syncCategoryUI(cat,value,label){
   });
 }
 async function fetchJSONRetry(url,opts,ms,retries){let lastErr=null;for(let i=0;i<=retries;i++){const ctl=new AbortController();const t=setTimeout(()=>ctl.abort(),ms);try{const r=await fetch(url,{...opts,signal:ctl.signal});clearTimeout(t);return await r.json()}catch(e){clearTimeout(t);lastErr=e;console.warn(`[fetchRetry] ${url} 第${i+1}次失败:`,e.message)}}throw lastErr}
-async function category(cat,value,label){filterMode=false;similarMode=false;sourceMode=false;customMode=false;customPickMode=false;privacyMode=false;dailyMode=false;currentCat=cat;currentValue=value;currentLabel=label||getCategoryLabel(cat,value);sortOrder=document.querySelector('#orderSelect')?.value||sortOrder;syncCategoryUI(cat,value,currentLabel);grid.className='grid';notice.textContent='正在读取…';let d;try{d=await fetchJSONRetry('/api/category',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cat,value,order:sortOrder,quality:qFilter})},8000,2)}catch(e){notice.textContent='读取失败，点击重试';grid.innerHTML='<div class="empty" style="grid-column:1/-1;padding:60px 0;text-align:center;color:var(--muted)">加载失败：'+e.message+'<br><button onclick="category(currentCat,currentValue,currentLabel)" style="margin-top:14px;border:1px solid var(--line);background:#ffffff;border-radius:18px;padding:8px 18px;cursor:pointer">重试</button></div>';return}assets=d.assets||[];/*分类视图只显示可见资产(hidden=过滤表/相似折叠/回收站),与侧栏计数和 answer 口径一致;自定义分类(用户人工归属)与回收站保留全部*/if(cat!=='custom'&&cat!=='recycle')assets=assets.filter(a=>!a.hidden);if(cat==='latest'&&categoriesCache){categoriesCache.total=assets.length;renderSideGroups(categoriesCache)}notice.textContent=(assets.length?`共 ${assets.length.toLocaleString()} 项 · `:'')+(sortOrder==='asc'?'最旧在前':'最新在前');{const _bc=document.getElementById('brandCount');if(_bc){_bc.textContent=assets.length?`共 ${assets.length.toLocaleString()} 项`:'';_bc.hidden=!assets.length}notice.textContent=''}draw()}
+async function category(cat,value,label){filterMode=false;similarMode=false;sourceMode=false;customMode=false;customPickMode=false;privacyMode=false;dailyMode=false;currentCat=cat;currentValue=value;currentLabel=label||getCategoryLabel(cat,value);sortOrder=document.querySelector('#orderSelect')?.value||sortOrder;syncCategoryUI(cat,value,currentLabel);grid.className='grid';notice.textContent='正在读取…';let d;try{d=await fetchJSONRetry('/api/category',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cat,value,order:sortOrder,quality:qFilter})},8000,2)}catch(e){notice.textContent='读取失败，点击重试';grid.innerHTML='<div class="empty" style="grid-column:1/-1;padding:60px 0;text-align:center;color:var(--muted)">加载失败：'+e.message+'<br><button onclick="category(currentCat,currentValue,currentLabel)" style="margin-top:14px;border:1px solid var(--line);background:#ffffff;border-radius:18px;padding:8px 18px;cursor:pointer">重试</button></div>';return}assets=d.assets||[];/*分类视图只显示可见资产(hidden=过滤表/相似折叠/回收站),与侧栏计数和 answer 口径一致;自定义分类(用户人工归属)与回收站保留全部*/if(cat!=='custom'&&cat!=='recycle')assets=assets.filter(a=>!a.hidden);if(cat==='latest'&&categoriesCache){categoriesCache.total=assets.length;renderSideGroups(categoriesCache)}/* 2026-09-29 修复：原来先往 notice 写「共 N 项 · 最新在前」，紧接着又无条件 notice.textContent='' 清空 → 那行提示永远不显示（死代码）。现在有 #brandCount 就只写它，没有才回落到 notice 提示。 */{const _bc=document.getElementById('brandCount');if(_bc){_bc.textContent=assets.length?`共 ${assets.length.toLocaleString()} 项`:'';_bc.hidden=!assets.length;notice.textContent=''}else{notice.textContent=(assets.length?`共 ${assets.length.toLocaleString()} 项 · `:'')+(sortOrder==='asc'?'最旧在前':'最新在前')}}draw()}
 async function query(q){
   filterMode=false;similarMode=false;sourceMode=false;customMode=false;customPickMode=false;privacyMode=false;dailyMode=false;
   if(selectMode)exitSelectMode();
@@ -1519,6 +1519,7 @@ async function checkNew(){
   notice.textContent='正在扫描 NAS 并增量写入索引，原片保持只读…';
   try{
     const r=await fetch('/api/check-new',{method:'POST'});
+    if(r.status===403){notice.textContent='扫描入库属管理员操作：请用管理员账号登录后再试。';return;}
     if(!r.ok)throw new Error(`HTTP ${r.status}`);
     const d=await r.json();
     const resultText=d.failed?.length?`扫描 ${d.scanned.toLocaleString()} 项，新增入库 ${d.indexed.toLocaleString()} 项，失败 ${d.failed.length} 项`:`扫描 ${d.scanned.toLocaleString()} 项，新增入库 ${d.indexed.toLocaleString()} 项，总库 ${d.total_assets.toLocaleString()} 项`;
@@ -1542,7 +1543,7 @@ async function addSource(path,label,type){const p=(path||document.querySelector(
 async function pollScan(scan_id,ctx){const prog=document.querySelector('#srcProgress');const bar=prog?.querySelector('.bar>div');const msg=prog?.querySelector('.msg');if(prog)prog.style.display='block';for(let i=0;i<360;i++){await new Promise(r=>setTimeout(r,1000));let st;try{st=await fetch('/api/source/scan_status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scan_id})}).then(r=>r.json())}catch(e){continue}if(st.error){setSrcNotice('扫描状态获取失败：'+st.error,'err');break}if(bar){const total=st.total_files||st.result?.scanned||0;const pct=total?Math.min(100,Math.round((st.scanned||0)/total*100)):(st.done?100:0);bar.style.width=pct+'%'}if(msg)msg.textContent=st.message||`已扫描 ${st.scanned||0}，已入库 ${st.indexed||0}，失败 ${st.failed||0}`;if(st.done){const r=st.result||{};setSrcNotice(`${ctx==='add'?'添加':'扫描'}完成：扫描 ${r.scanned||0} 个文件，新增入库 ${r.indexed||0} 项${r.failed?.length?` · 失败 ${r.failed.length} 项`:''}`,'ok');await refreshSourceView();refreshCategories();break}}}
 async function scanSource(id){const d=await fetch('/api/source/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source_id:id})}).then(r=>r.json());if(d.error){setSrcNotice('扫描失败：'+d.error,'err');return}await pollScan(d.scan_id,'scan')}
 async function toggleSource(id,en){await fetch('/api/source/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source_id:id,enabled:!!en})});await refreshSourceView();setSrcNotice(en?'来源已启用：参与自动扫描，其文件正常展示':'来源已停用：不再扫描，已入库文件保留','ok');refreshCategories()}
-async function removeSource(id){const s=sourcesData.find(x=>x.source_id===id);if(!s)return;if(!confirm(`确认移除来源「${s.label}」？\n${s.root_path}\n移除后其 ${Number(s.file_count).toLocaleString()} 个文件的索引及相关数据（过滤/分组等）将从总库删除；原片文件本身不受影响。`))return;const d=await fetch('/api/source/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source_id:id})}).then(r=>r.json());if(d.error){setSrcNotice('移除失败：'+d.error,'err')}else{setSrcNotice(`已移除来源 · 清理 ${d.assets_removed} 个资产${d.cache_files_removed?` · 缩略图缓存 ${d.cache_files_removed} 个文件（已入废纸篓）`:''} · 总库剩余 ${Number(d.total_assets).toLocaleString()} 项`,'ok');await refreshSourceView();refreshCategories()}}
+async function removeSource(id){const s=sourcesData.find(x=>x.source_id===id);if(!s)return;if(!confirm(`确认移除来源「${s.label}」？\n${s.root_path}\n移除后其 ${Number(s.file_count).toLocaleString()} 个文件的索引及相关数据（过滤/分组等）将从总库删除；原片文件本身不受影响。`))return;const d=await fetch('/api/source/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source_id:id})}).then(r=>r.json());if(d.error){setSrcNotice('移除失败：'+d.error,'err')}else{setSrcNotice(`已移除来源 · 清理 ${d.assets_removed} 个资产${d.cache_files_removed?` · 缩略图缓存 ${d.cache_files_removed} 个文件已清理`:''} · 总库剩余 ${Number(d.total_assets).toLocaleString()} 项`,'ok');await refreshSourceView();refreshCategories()}}
 async function discoverSources(){const hint=document.querySelector('#autoHint');if(hint)hint.textContent='正在扫描候选目录（外接卷/网盘/本机）…';setSrcNotice('');const d=await fetch('/api/source/discover',{method:'POST'}).then(r=>r.json());discoverCache=d.candidates||[];const list=document.querySelector('#candList');if(list)list.innerHTML=discoverCache.length?discoverCache.map((c,i)=>`<div class="cand"><b>${esc(c.path)}</b><span class="k">${esc(c.kind)} · 约 ${c.media_files} 个媒体文件</span><button onclick="addCandidate(${i})">添加</button></div>`).join(''):'<div class="k" style="padding:6px 2px">没有发现新的可用目录；如需接入网盘，请先在网盘客户端设置好同步目录，再来这里自动发现或手动添加</div>';if(hint)hint.textContent=discoverCache.length?`发现 ${discoverCache.length} 个候选目录，点「添加」直接接入`:'扫描完成，无新目录'}
 function addCandidate(i){const c=discoverCache[i];if(c)addSource(c.path,'','local_folder')}
 async function loadAutoscan(){const d=await fetch('/api/source/autoscan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})}).then(r=>r.json());const row=document.querySelector('#autoRow');if(!row)return;row.innerHTML=`<button class="${d.enabled?'on':''}" onclick="toggleAutoscan(${d.enabled?0:1})">${d.enabled?'已开启 · 点击关闭':'已关闭 · 点击开启'}</button><span>扫描间隔</span><select onchange="setAutoscanInterval(this.value)">${[30,60,120,360,720,1440].map(v=>`<option value="${v}" ${v==d.interval_min?'selected':''}>${v<60?v+' 分钟':(v/60)+' 小时'}</option>`).join('')}</select><span class="k">${d.last_scan_at?('上次自动扫描 '+String(d.last_scan_at).slice(0,19).replace('T',' ')+' · 新增 '+d.last_scan_indexed+' 项'):'服务启动 90 秒后执行首次自动扫描'}</span>`}
@@ -2399,7 +2400,7 @@ async function refreshTasks(){try{
   const set=(id,v)=>{const e=document.querySelector(id);if(e)e.textContent=v};
   const sw=(id,on)=>{const e=document.querySelector(id);if(e)e.checked=!!on};
   sw('#warmSw',d.warm&&d.warm.enabled);sw('#vcSw',d.videolc&&d.videolc.enabled);sw('#guardSw',d.res&&d.res.enabled);
-  const w=d.warm||{};set('#warmSub',w.running?`正在预热 ${w.done}/${w.total}${w.total?`（${Math.round(w.done/w.total*100)}%）`:''}`:`待预热视频全量巡检${w.last_at?`（上次 ${w.last_at.slice(5,16)}：${w.last_result||''}）`:''}`);
+  const w=d.warm||{};set('#warmSub',w.running?`正在预热 ${w.done}/${w.total}${w.total?`（${Math.round(w.done/w.total*100)}%）`:''}`:`预热巡检：只补真正缺缓存的${w.last_at?`（上次 ${w.last_at.slice(5,16)}：${w.last_result||''}）`:''}`);
   const v=d.videolc||{};set('#vcSub',v.running?'正在转码中':(v.pending>0?`待转码 ${v.pending} 条`:'已全部转完'));
   const r=d.res||{};const total=r.total_mb||0,avail=r.avail_mb||0;
   if(total){const pct=Math.round(avail/total*100);const bar=document.querySelector('#resBar');if(bar){bar.style.width=pct+'%';bar.className=avail<(r.danger_mb||0)?'danger':(avail<(r.warn_mb||0)?'warn':'')}
@@ -2863,7 +2864,7 @@ async function loadTripView(){openTripModal();const d=await fetch('/api/trip/lis
 function drawTripList(){
   const el=document.querySelector('#tripList');
   if(!tripData.length){el.innerHTML='<div class="trip-item">暂无旅行地点标记</div>';return}
-  el.innerHTML=tripData.map(t=>`<div class="trip-item"><div><b>${esc(t.name)}</b><i>${esc(t.start_date)} ~ ${esc(t.end_date)} · ${esc(t.region)} · ${esc(t.province)}</i></div><button onclick="deleteTrip('${t.trip_id}')">删除</button></div>`).join('');
+  el.innerHTML=tripData.map(t=>`<div class="trip-item"><div><b>${esc(t.name)}</b><i>${esc(t.start_date)} ~ ${esc(t.end_date)} · ${esc(t.region)} · ${esc(t.province)}</i></div><button onclick="deleteTrip('${tripJsAttr(t.trip_id)}')">删除</button></div>`).join('');
 }
 function applyTripPreset(){
   const v=document.querySelector('#tripPreset').value;if(!v)return;const p=TRIP_PRESETS[v];
@@ -3749,6 +3750,15 @@ function mapReset(){
 // ===== 旅行标记面板（2026-09-09：地图页入口，/api/trip/* 后端直连） =====
 let _tripGroups=null;
 function tripEsc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+// 2026-09-29 安全审计：tripEsc 那套 HTML 转义**不能**用来拼 onclick 里的 JS 字符串。
+// &#39; 会被 HTML 解析器解回单引号 → 直接逃出 tripDelete('...') 的引号：
+// 旅行名填 x');alert(1)// 即可执行脚本（存储型 XSS）。这里做「JS 字符串 + HTML 属性」
+// 双重转义，先按 JS 规则转义引号/反斜杠，再做 HTML 实体转义，顺序不能反。
+function tripJsAttr(s){
+  return String(s==null?'':s)
+    .replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 function tripPanelToggle(){
   const m=document.getElementById('tripModal');
   if(m.classList.contains('show')) tripPanelClose(); else tripPanelOpen();
@@ -3828,7 +3838,7 @@ function tripLoadList(){
         +'<div class="ti-name">'+tripEsc(t.name||t.region)+'</div>'
         +'<div class="ti-meta">'+tripEsc(t.region)+(t.district?'· '+tripEsc(t.district):'')
         +'　'+t.start_date+' ~ '+t.end_date+'</div></div>'
-        +'<button class="ti-del" title="删除该旅行标记" onclick="tripDelete(\''+tripEsc(t.trip_id)+'\',\''+tripEsc(t.name||t.region)+'\')">✕</button></div>').join('');
+        +'<button class="ti-del" title="删除该旅行标记" onclick="tripDelete(\''+tripJsAttr(t.trip_id)+'\',\''+tripJsAttr(t.name||t.region)+'\')">✕</button></div>').join('');
     }).catch(()=>{box.innerHTML='<div class="trip-item" style="color:var(--muted)">列表加载失败</div>';});
 }
 function tripDelete(tripId,name){

@@ -994,6 +994,12 @@ function renderRibbon(assets) {
   focusT = 0;
   focusTarget = 0;
   focusEntering = false;
+  // 2026-09-29 修复：这里复位了 focusT/focusTarget，却没摘 body.focused。
+  // body.focused 会把 .qbox / .boticons / .thread / .wallcount / .taglist 一起
+  // 置成 pointer-events:none，而退出聚焦的正规通路（exitFocus）只在
+  // focusTarget===1 时才被触发 → 一旦在聚焦态下走到 renderRibbon（提问返回结果、
+  // 分类落地），搜索框与标签栏就永久消失且点不动，页面看着像卡死。
+  document.body.classList.remove('focused');
   cbT = 0; cbTarget = 0; cbPending = false; travel = null;
   const vids = allLandscape.filter(a => a.type === 'video').length;
   wallcount.textContent = allLandscape.length

@@ -28,3 +28,9 @@ releases/
 # 本地测试库不入库
 *.db
 !schema_raw.json
+
+# ===== 2026-09-29 更新包签名私钥（绝不能进仓库）=====
+tools/update_signing.key
+tools/*.key
+!tools/*.pub
+update_pkg/

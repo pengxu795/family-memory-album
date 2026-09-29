@@ -50,8 +50,11 @@
   #vinfo.on { display: block; }
   #vcount { position: fixed; bottom: 14px; right: 30px; color: #797979; font-size: 16px; z-index: 5; }
 </style>
-<link rel="stylesheet" href="/theme.css?v=06">
-<link rel="stylesheet" href="/ui.css?v=2">
+<!-- 2026-09-29 修复：这里原先还引了 theme.css + ui.css。那两张表是给**浅色**主题
+     页面用的，且带 !important（.card{background:#fff!important}、
+     body{background:...}）—— 电视端是整块深色大屏 UI，被它们一盖就整页翻白：
+     黑底变白底、#login 的深色登录卡变成白色直角块（实测 body 计算背景 = rgb(255,255,255)，
+     而本文件内联写的是 #000）。电视端样式自成一套，不需要也不该引全局主题表。 -->
 </head>
 <body>
 

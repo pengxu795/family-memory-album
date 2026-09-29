@@ -61,8 +61,13 @@ def _pending_migrations(con):
 def ensure_schema(db_path):
     """确保 db_path 的库具备完整 schema（核心 71 表幂等 + migrations 增量）。
     返回 (created_tables_count, applied_migrations)；库文件不存在时自动创建。"""
-    con = sqlite3.connect(str(db_path))
+    # 2026-09-29 修复：原来 connect 既没 timeout 也没 busy_timeout（默认 5 秒）。
+    # 本函数在启动序列里跑在「切 WAL」之前，若上次崩溃留下写锁/热点 journal，
+    # 会直接抛 database is locked → 启动失败 → 容器崩溃循环（09-25 库损坏事故的
+    # 同族风险）。与 migrate_paths.py 的 busy_timeout=30000 对齐。
+    con = sqlite3.connect(str(db_path), timeout=30)
     try:
+        con.execute("PRAGMA busy_timeout=30000")
         before = {
             r[0]
             for r in con.execute(

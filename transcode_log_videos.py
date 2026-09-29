@@ -30,6 +30,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 DATA_DIR = os.environ.get("FF_DATA_DIR", "/data")
 DB = os.path.join(DATA_DIR, "family_memory.db")
@@ -42,18 +43,30 @@ import server as S  # noqa: E402
 
 
 def lc_video_rows():
-    """所有 is_log=1 的视频 (asset_id, filename, src_path|None)。"""
+    """所有 is_log=1 的视频 (asset_id, filename, src_path|None)。
+
+    2026-09-29：表不存在时给一句人话就退出（新库/尚未跑过 Log 色彩管线的机器上
+    这张表是服务首次用到才建的）。原来直接抛 no such table 的 traceback，
+    看日志的人会以为是转码器坏了。
+    """
     con = sqlite3.connect(DB, timeout=30)
     con.row_factory = sqlite3.Row
-    rows = con.execute("""
-        SELECT ma.asset_id, mf.filename, mf.absolute_path
-        FROM asset_log_color_v0 lc
-        JOIN media_asset ma ON ma.asset_id = lc.asset_id AND ma.media_type='video'
-        LEFT JOIN media_file mf ON mf.asset_id = ma.asset_id
-        WHERE lc.is_log = 1
-        ORDER BY mf.byte_size ASC
-    """).fetchall()
-    con.close()
+    try:
+        rows = con.execute("""
+            SELECT ma.asset_id, mf.filename, mf.absolute_path
+            FROM asset_log_color_v0 lc
+            JOIN media_asset ma ON ma.asset_id = lc.asset_id AND ma.media_type='video'
+            LEFT JOIN media_file mf ON mf.asset_id = ma.asset_id
+            WHERE lc.is_log = 1
+            ORDER BY mf.byte_size ASC
+        """).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "asset_log_color_v0" in str(exc):
+            print("库中还没有 asset_log_color_v0 表（尚未跑过 Log 色彩识别），无需转码", flush=True)
+            return []
+        raise
+    finally:
+        con.close()
     return [(r["asset_id"], r["filename"], r["absolute_path"]) for r in rows]
 
 
@@ -97,7 +110,13 @@ def _make_limit(rlimit_as):
     """ffmpeg 子进程护栏工厂：RLIMIT_AS 按档位走 + nice 19（风暴血案教训）。
     2026-09-24 实测 1.8GB 偏紧：4K HEVC 软解 DPB + x264 frame-threads 的
     VSZ（含线程栈/mmap）轻松超限 → x264 报 "Error submitting video frame"
-    大面积失败。2.2GB 起步（RSS 远小于此），夜间 2 核档放宽到 2.4GB。"""
+    大面积失败。2.2GB 起步（RSS 远小于此），夜间 2 核档放宽到 2.4GB。
+
+    2026-09-29 说明：**只在打包版（frozen）里才会被用到**。非 frozen 走
+    _limit_shim_cmd() 的独立解释器外壳 —— preexec_fn 在「fork 之后、exec 之前」
+    执行 Python 代码，而本进程 import 了 server/numpy/opencv，可能已有多线程，
+    子进程只继承当前线程的锁状态 → 有概率死锁（子进程挂住，转码永远卡在第一条）。
+    """
     def _f():
         try:
             resource.setrlimit(resource.RLIMIT_AS, (rlimit_as, rlimit_as))
@@ -108,6 +127,47 @@ def _make_limit(rlimit_as):
         except Exception:
             pass
     return _f
+
+
+# 独立解释器外壳：先设 rlimit + nice，再 execvp 换成 ffmpeg（同进程，护栏依然生效）。
+# 这样护栏代码跑在一个全新的单线程 Python 里，彻底绕开 preexec_fn 的 fork 死锁风险。
+_LIMIT_SHIM = (
+    "import os,resource,sys;"
+    "resource.setrlimit(resource.RLIMIT_AS,(int(sys.argv[1]),)*2);"
+    "os.nice(19);"
+    "os.execvp(sys.argv[2], sys.argv[2:])"
+)
+
+
+def _limit_shim_cmd(rlimit_as, cmd):
+    """把 ffmpeg 命令包进护栏外壳，返回可直接 subprocess.run 的 argv。"""
+    return [sys.executable, "-c", _LIMIT_SHIM, str(rlimit_as), *cmd]
+
+
+def _cleanup_tmp_orphans(max_age_sec=3600):
+    """清掉历史残留的 .tmp<pid> 半成品（2026-09-29 补）。
+
+    转码中途被杀（护栏熔断 / 容器重启 / 断电）会留下 out + .tmp<pid>；而重跑时
+    pid 变了 → 生成**新的** tmp 文件，老的永远没人管。实测已积 12 个 / 263MB。
+    只删超过 1 小时没被碰过的，避免误删正在写的活动转码。
+    """
+    removed = nbytes = 0
+    try:
+        for p in Path(OUT_DIR).glob("*.tmp*"):
+            try:
+                if time.time() - p.stat().st_mtime < max_age_sec:
+                    continue
+                nbytes += p.stat().st_size
+                p.unlink()
+                removed += 1
+            except OSError:
+                continue
+    except Exception as exc:
+        print(f"  [warn] 清理 .tmp 残留失败（忽略）：{exc}", flush=True)
+        return 0
+    if removed:
+        print(f"  清理残留半成品 {removed} 个 / {nbytes/1e6:.0f}MB", flush=True)
+    return removed
 
 
 def transcode_one(asset_id, src):
@@ -136,8 +196,14 @@ def transcode_one(asset_id, src):
            # 扩展名猜 muxer 会报 "use a standard extension"（2026-09-24 实锤）
            "-f", "mp4", tmp]
     try:
-        subprocess.run(cmd, capture_output=True, timeout=4 * 3600, check=True,
-                       preexec_fn=_make_limit(rl))
+        if getattr(sys, "frozen", False):
+            # 打包版：sys.executable 是 app 二进制，`python -c` 外壳不成立，退回 preexec_fn
+            subprocess.run(cmd, capture_output=True, timeout=4 * 3600, check=True,
+                           preexec_fn=_make_limit(rl))
+        else:
+            # 常规/容器：走独立解释器外壳，护栏等价但无 fork 死锁风险（见 _make_limit 注释）
+            subprocess.run(_limit_shim_cmd(rl, cmd), capture_output=True,
+                           timeout=4 * 3600, check=True)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         err = ""
         if isinstance(e, subprocess.CalledProcessError) and e.stderr:
@@ -162,7 +228,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0, help="最多转 N 条（0=不限）")
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--no-clean-tmp", action="store_true", help="跳过历史 .tmp 残留清理")
     args = ap.parse_args()
+
+    # 开工先扫一遍历史半成品（被杀/断电留下的 .tmp<pid>，无人回收会一直占磁盘）
+    if not args.no_clean_tmp:
+        _cleanup_tmp_orphans()
 
     rows = lc_video_rows()
     todo, done, miss = [], 0, []

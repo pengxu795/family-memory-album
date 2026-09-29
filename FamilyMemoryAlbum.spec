@@ -26,6 +26,15 @@ datas = [
     ("caption_days.py", "."),
     ("manual_face_create.py", "."),
     ("migrate_paths.py", "."),
+    # 2026-09-29 修复：以下 4 个是 server.py 经 --ff-worker 拉起的后台 worker，原先没进
+    # datas → pyinstaller 打的 .app 里这些任务全部找不到文件而静默失效
+    # （对应 server.py:WORKER_SCRIPTS 的 vlm / privacy / enrich / videolc 四档）。
+    # ★ 本列表与 server.py:WORKER_SCRIPTS、launcher.py 的 scripts 字典、Dockerfile
+    #   的 COPY 清单四处必须同步，加新 worker 脚本时一起改。
+    ("vlm_describe_assets.py", "."),
+    ("privacy_auto_scan.py", "."),
+    ("enrich.py", "."),
+    ("transcode_log_videos.py", "."),
 ]
 if MODELS_DIR.exists():
     datas.append((str(MODELS_DIR), "models"))

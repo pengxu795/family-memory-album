@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.13"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.14"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -113,7 +113,34 @@ SIGLIP_MODEL_DIR = os.environ.get("FF_SIGLIP2_DIR") or str(
     Path(__file__).resolve().parent.parent / "models" / "siglip2-base-patch16-224")
 
 
-# ---- 资产缓存（缩略图/预览）清理：一律移入 ~/.Trash，可恢复，原片不受影响 ----
+# ---- 资产缓存（缩略图/预览）清理：桌面端移入废纸篓可恢复，容器内直接删 ----
+_FS_TRASH = None
+
+
+def _has_desktop_trash():
+    """有没有「真废纸篓」可用（2026-09-29）。
+
+    背景：原实现无条件把缓存 shutil.move 到 ~/.Trash/family-memory-cache。
+    在 macOS .app 下这是对的（用户可从废纸篓捞回来）；但在 Docker/NAS 里
+    Path.home() = /root，缓存只是被搬进**容器可写层**，磁盘空间一点没释放，
+    而日志还写着「已清理」——用户以为腾出了空间，数据卷照样涨。
+    """
+    global _FS_TRASH
+    if _FS_TRASH is not None:
+        return _FS_TRASH
+    try:
+        # 容器特征：/.dockerenv 存在，或 /data 是挂载卷（FF_DATA_DIR 由 compose 指定）
+        if Path("/.dockerenv").exists():
+            _FS_TRASH = False
+        elif os.environ.get("FM_IN_CONTAINER") == "1":
+            _FS_TRASH = False
+        else:
+            _FS_TRASH = (Path.home() / ".Trash").is_dir()
+    except Exception:
+        _FS_TRASH = False
+    return _FS_TRASH
+
+
 def _trash_cache_dir():
     d = Path.home() / ".Trash" / "family-memory-cache"
     d.mkdir(parents=True, exist_ok=True)
@@ -121,11 +148,15 @@ def _trash_cache_dir():
 
 
 def _purge_asset_cache(asset_ids):
-    """把指定资产的缩略图/预览缓存移入废纸篓。返回移除的文件数。"""
+    """清理指定资产的缩略图/预览缓存，返回移除的文件数。
+
+    桌面端 → 移入废纸篓（可恢复）；容器内 → 直接删除（否则只是搬家，空间不释放）。
+    """
     moved = 0
     if not asset_ids:
         return moved
-    trash = _trash_cache_dir()
+    use_trash = _has_desktop_trash()
+    trash = _trash_cache_dir() if use_trash else None
     for aid in asset_ids:
         token = aid[6:] if aid.startswith("asset_") else aid
         for base_dir in (THUMB_DIR, PREVIEW_DIR):
@@ -133,7 +164,10 @@ def _purge_asset_cache(asset_ids):
                 continue
             for p in base_dir.glob(f"{token}*.jpg"):
                 try:
-                    shutil.move(str(p), str(trash / p.name))
+                    if use_trash:
+                        shutil.move(str(p), str(trash / p.name))
+                    else:
+                        p.unlink()
                     moved += 1
                 except Exception:
                     pass
@@ -170,7 +204,8 @@ def _cleanup_orphan_cache():
                 orphan_ids.add(f"asset_{token}")
     moved = _purge_asset_cache(orphan_ids)
     if moved:
-        print(f"[cache-cleanup] 清理孤儿缓存 {moved} 个文件 → ~/.Trash/family-memory-cache/", flush=True)
+        _dest = "~/.Trash/family-memory-cache/" if _has_desktop_trash() else "直接删除（容器内无废纸篓）"
+        print(f"[cache-cleanup] 清理孤儿缓存 {moved} 个文件 → {_dest}", flush=True)
 
 
 # API 凭据（服务进程的 python 可能没有 yaml 模块，做正则兜底解析，避免 API_KEY 静默为空）
@@ -729,8 +764,30 @@ CLOUD_CANDIDATE_DIRS = [
 DISCOVER_SKIP_NAMES = {"Macintosh HD", "Recovery", "VMware Shared Folders", ".timemachine"}
 
 
+_SOURCE_SCHEMA_READY = False          # 进程内只跑一次（见 _ensure_source_schema 注释）
+_SOURCE_SCHEMA_LOCK = threading.Lock()
+
+
 def _ensure_source_schema(con):
-    """source 表补充 enabled/total_files/indexed_count/failed_count 列 + 应用设置表。"""
+    """source 表补充 enabled/total_files/indexed_count/failed_count 列 + 应用设置表。
+
+    2026-09-29 性能修复：原先 get_setting/set_setting **每次调用**都跑这一整套
+    （3 条 ALTER 靠抛异常感知列已存在 + 2 条带 COUNT(*) 子查询的 UPDATE + commit）。
+    而 get_setting 在最热的路径上：dev-reload 看门狗 2 秒轮询一次、machine_profile、
+    自动扫描配置轮询…… 一天几万次，每次都在写事务里做一遍建表迁移，纯浪费。
+    改为进程内只跑一次；启动时（12600 行）会显式再跑一次兜底。
+    """
+    global _SOURCE_SCHEMA_READY
+    if _SOURCE_SCHEMA_READY:
+        return
+    with _SOURCE_SCHEMA_LOCK:
+        if _SOURCE_SCHEMA_READY:
+            return
+        _ensure_source_schema_impl(con)
+        _SOURCE_SCHEMA_READY = True
+
+
+def _ensure_source_schema_impl(con):
     try:
         con.execute("ALTER TABLE source ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
     except Exception:
@@ -1187,21 +1244,30 @@ _AUTH_ADMIN_PREFIXES = (
     "/api/filter/add", "/api/filter/remove", "/api/auth/users",
     # 2026-09-16 增量富化：状态查询与手动触发都属后台任务，admin 专属
     "/api/enrich",
+    # 2026-09-29 安全审计修复：/api/check-new 名字像「查一下有没有新照片」，实际会
+    # 全盘遍历来源目录 + INSERT media_asset/media_file + UPDATE source + 触发
+    # rebuild_geo()/rebuild_scene_tags()（SIGLIP 全库打分）。它原先被误放进
+    # 「只读 POST 白名单」→ 一个访客账号一条请求就能让 NAS 跑十几分钟重活并占住
+    # SQLite 写锁，可反复触发。这里收归管理员专属；前端只在「数据来源」管理页
+    # （本身已是 admin 专区）调用它，无功能影响。
+    "/api/check-new",
+    # 2026-09-29：开发模式自动重载开关（GET 读状态 / POST 改开关）都是管理员操作
+    "/api/dev",
 )
 # 非 admin 允许的写方法白名单：本服务路由几乎全是 POST（含只读查询），
 # 故非 admin 采用「只读 POST 白名单 + 默认拒绝」，白名单只收纯读接口。
+# ※ 2026-09-29 安全审计：往这里加路径前先确认 handler 真的不写库。已移除两个
+#   写接口（/api/check-new 见上、/api/crop 见 do_POST 内的 action 级校验）。
 _AUTH_READ_POST_ALLOW = (
     "/api/auth/passwd",      # 2026-09-13 本人修改密码（handler 内拦 guest，访客由管理员重置）
     "/api/ask",              # 中文自然语言问答（招牌功能，纯查询）
     "/api/asset/search",     # 照片搜索
-    "/api/check-new",        # 新照片轮询
     "/api/geo/regions", "/api/geo/map",   # 中国地图
     "/api/trip/list",        # 旅行列表
     "/api/filter/list",      # 筛选器
     "/api/filter/count",     # 侧栏过滤计数徽标（只读）
     "/api/tags",             # 标签
     "/api/categories", "/api/category",   # 分类浏览
-    "/api/crop",             # 局部图预览
 )
 # family 角色可用的内容级写操作（2026-09-13）：与用户管理页角色描述"可看可管理"
 # 一致——移出/恢复墙面、回收站、裁切、手动定位锚点。系统配置/后台任务仍 admin 专属。
@@ -1211,6 +1277,12 @@ _AUTH_FAMILY_POST_ALLOW = (
     "/api/geo/seed",
 )
 # /api/people 特例：读分支(detail/无action)放行、写分支(update_*)在 handler 内校验 admin
+# 2026-09-29 安全审计新增：读/写分支混在同一路由、且差异藏在 body.action 里，
+# 鉴权门看不到 body → 统一放行到这里，由各自的 handler 读 action 后判定。
+# 对应的 handler 必须在写分支前调用 _guard_mutation(handler)。
+_AUTH_HANDLER_GUARDED = (
+    "/api/crop",   # map 只读（访客可用）；set/clear 写 crop_v0（仅 admin/family）
+)
 
 
 def _verify_password(pw, stored):
@@ -1358,6 +1430,82 @@ def update_check_remote():
         return None
 
 
+# ---------- 2026-09-29 安全审计：更新包下载地址白名单 ----------
+# 加固前的洞：manifest 里的 url 字段原样交给 urlopen。manifest 来自更新源（外网、
+# 可被劫持/可被中间人改写），而 update_apply() 会用包里的 server.py 覆盖自身并重启
+# → 只要管理员点一次「升级」，攻击者的代码就以容器 root 身份跑起来。
+# 另一层自证也帮不上：md5 同样取自那份 manifest（攻击者自证自）。
+# 这里做零依赖的硬收口；真正的密码学验签见 verify_package_signature()（有
+# cryptography 时自动强制）。
+UPDATE_OFFICIAL_HOSTS = {
+    # GitHub Releases / raw 的对象域（release.py 默认渠道）
+    "github.com", "api.github.com", "codeload.github.com",
+    "raw.githubusercontent.com", "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com", "github-releases.githubusercontent.com",
+}
+
+
+def _update_host_allowed(host, feed_host):
+    """下载域名白名单：只允许更新源自己的 host + GitHub 官方对象域。"""
+    host = (host or "").lower()
+    if not host:
+        return False
+    if feed_host and host == feed_host.lower():
+        return True
+    return host in UPDATE_OFFICIAL_HOSTS
+
+
+def _is_private_host(host):
+    """私有/回环地址（允许 http 自建源，如局域网 NAS 上的更新目录）。"""
+    h = (host or "").lower()
+    if h in ("localhost", "127.0.0.1", "::1"):
+        return True
+    if re.match(r"^10\.\d+\.\d+\.\d+$", h) or re.match(r"^192\.168\.\d+\.\d+$", h):
+        return True
+    if re.match(r"^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$", h):
+        return True
+    if h.endswith((".local", ".lan", ".internal")):
+        return True
+    return False
+
+
+def _update_url_ok(url, feed):
+    """更新包 URL 是否可信。返回 (ok, 原因)。"""
+    try:
+        u = urllib.parse.urlparse(url)
+        f = urllib.parse.urlparse(feed)
+    except Exception:
+        return False, "URL 解析失败"
+    if u.scheme not in ("http", "https"):
+        return False, f"不允许的协议 {u.scheme}"
+    if not _update_host_allowed(u.hostname, f.hostname):
+        return False, f"下载域名不在白名单：{u.hostname}"
+    # https 是默认要求；只有「同源 + 私有地址」才允许 http（局域网自建源）
+    if u.scheme == "http":
+        if not (f.hostname and u.hostname == f.hostname.lower() and _is_private_host(u.hostname)):
+            return False, "非私有地址的更新源必须使用 https"
+    return True, ""
+
+
+class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
+    """禁止跨域重定向：GitHub Releases 会 302 到 objects.githubusercontent.com，
+    这类官方对象域放行；跳到别的域名一律拒绝，避免「白名单域名 → 攻击者域名」。"""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        host = urllib.parse.urlparse(newurl).hostname or ""
+        if host.lower() not in UPDATE_OFFICIAL_HOSTS:
+            feed_host = urllib.parse.urlparse(get_update_feed_url() or "").hostname or ""
+            if host.lower() != feed_host.lower():
+                raise urllib.error.HTTPError(
+                    newurl, code, f"跨域重定向被拒绝：{host}", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _update_opener():
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), _SameHostRedirect())
+
+
 def update_fetch_remote(man):
     """下载远程更新包到 /data/updates/（500MB 上限），校验 md5 与包内版本一致性。"""
     feed = get_update_feed_url()
@@ -1366,6 +1514,10 @@ def update_fetch_remote(man):
     if "/" in fname or "\\" in fname or ".." in fname or not fname.endswith(".zip"):
         return False, f"非法更新包文件名: {fname}"
     url = man.get("url") or (feed.rstrip("/") + "/" + fname)
+    # 2026-09-29 安全审计：下载地址必须过白名单
+    _uok, _why = _update_url_ok(url, feed)
+    if not _uok:
+        return False, f"更新包地址被拒绝（{_why}）"
     dst = UPDATE_DIR / fname
     UPDATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_suffix(f".{threading.get_ident()}.dl.tmp")
@@ -1373,7 +1525,7 @@ def update_fetch_remote(man):
         req = urllib.request.Request(url, headers={"User-Agent": "FamilyMemory/" + APP_VERSION})
         h = hashlib.md5()
         n = 0
-        with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as f:
+        with _update_opener().open(req, timeout=60) as r, open(tmp, "wb") as f:
             while True:
                 chunk = r.read(1 << 16)
                 if not chunk:
@@ -1386,19 +1538,80 @@ def update_fetch_remote(man):
         if h.hexdigest() != man.get("md5"):
             tmp.unlink(missing_ok=True)
             return False, "下载包 md5 校验失败（源可能被篡改或下载不完整）"
+        # 2026-09-29：密码学验签（有 cryptography 时强制；缺库则降级并在结果里说明）
+        sig_ok, sig_msg = verify_package_signature(tmp, man)
+        if not sig_ok:
+            tmp.unlink(missing_ok=True)
+            return False, f"更新包签名校验失败：{sig_msg}"
         with zipfile.ZipFile(tmp) as zf:
             inner = json.loads(zf.read("manifest.json").decode("utf-8"))
         if inner.get("version") != man.get("version"):
             tmp.unlink(missing_ok=True)
             return False, f"包内版本 {inner.get('version')} 与源声明 {man.get('version')} 不一致"
         os.replace(tmp, dst)
-        return True, f"下载完成 {n/1024/1024:.1f}MB"
+        return True, f"下载完成 {n/1024/1024:.1f}MB（{sig_msg}）"
     except Exception as e:
         try:
             tmp.unlink(missing_ok=True)
         except Exception:
             pass
         return False, f"下载失败: {e}"
+
+
+# ---------- 2026-09-29 安全审计：更新包密码学验签 ----------
+# 设计取舍（写清楚，避免后人以为是漏了）：
+# · 更新包只能替换文件，**无法给运行中的容器 pip install**，所以不能把
+#   cryptography 做成硬依赖，否则老用户一升级就卡死。
+# · 因此分两级：装了 cryptography → 强制验签（缺 sig / 验签失败一律拒收）；
+#   没装 → 只做上面那层「域名白名单 + 同域跳转」，并在返回值里明说降级状态。
+# · 公钥在下，私钥由发布方（tools/release.py --sign）持有，不进仓库。
+UPDATE_SIGN_PUBKEY = os.environ.get("FM_UPDATE_PUBKEY", "")
+
+
+def _load_update_pubkey():
+    """公钥来源：env FM_UPDATE_PUBKEY > 数据目录 update_pubkey.txt。都没有则空。"""
+    if UPDATE_SIGN_PUBKEY.strip():
+        return UPDATE_SIGN_PUBKEY.strip()
+    try:
+        p = DATA_DIR / "update_pubkey.txt"
+        if p.is_file():
+            return p.read_text(encoding="utf-8").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def verify_package_signature(zip_path, man):
+    """验签更新包。返回 (ok, 说明)。
+
+    语义（opting-in 模型，避免 fail-open 假安全）：
+    · 本机**没配**公钥 → 视为没开启验签，放行并明说降级（此时靠域名白名单兜底）。
+    · 本机**配了**公钥 → 强制验签：缺签名、缺 cryptography、验签失败，一律拒收。
+      理由：管理员显式配了公钥就是开启了这道门，此时「攻击者删掉 sig 字段」是
+      最省事的绕过手法，绝不能因为字段缺失就放行。
+    """
+    pubkey = _load_update_pubkey()
+    if not pubkey:
+        return True, "未启用密码学验签（本机未配置更新公钥，已用域名白名单兜底）"
+    sig_b64 = str(man.get("sig") or "").strip()
+    if not sig_b64:
+        return False, "更新源未提供签名（本机已配置公钥，拒绝无签名更新包）"
+    try:
+        import base64
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    except Exception:
+        return False, ("本机已配置更新公钥但缺少 cryptography 库，无法验签。"
+                       "请安装该库（pip install cryptography）或清空 update_pubkey.txt 关闭验签")
+    try:
+        pk = serialization.load_pem_public_key(pubkey.encode("utf-8"))
+        if not isinstance(pk, Ed25519PublicKey):
+            return False, "公钥类型不是 Ed25519"
+        digest = hashlib.sha256(zip_path.read_bytes()).digest()
+        pk.verify(base64.b64decode(sig_b64), digest)
+        return True, "签名校验通过"
+    except Exception as exc:
+        return False, f"签名不匹配（{type(exc).__name__}）"
 
 
 # 更新包允许落地的文件（白名单最小化，2026-09-24 补）。
@@ -1545,9 +1758,50 @@ def _strip_token_param(handler):
     handler.path = urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(qs)))
 
 
+def _host_allowed(handler):
+    """Host 头校验（2026-09-29，P2-8：DNS rebinding 防御）。
+
+    背景：本服务常年在局域网里裸跑（内网 IP + 非标端口），响应又统一带
+    Access-Control-Allow-Origin: *。「CORS 通配 + 内网可达」的经典组合叫
+    DNS rebinding：攻击者让受害者打开他的页面，把自己的域名解析到
+    192.168.x.x / 127.0.0.1，再让页面向本服务发请求。
+
+    本项目的会话 Cookie 是随机 token + HttpOnly + SameSite=Lax，rebinding
+    拿不到凭据，所以风险不高；但「服务愿意接受任意域名的 Host」本身没有正当理由，
+    顺手关掉：只放行 IP、localhost、内网主机名（.local/.lan/.internal），
+    以及用户在设置里显式加白的域名（allowed_hosts，逗号分隔）。
+    """
+    host = (handler.headers.get("Host") or "").strip()
+    if not host:
+        return True          # HTTP/1.0 无 Host：本机工具直连，放行
+    h = host.rsplit(":", 1)[0].strip("[]").lower()
+    if h in ("localhost", "127.0.0.1", "::1"):
+        return True
+    if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", h):
+        return True          # 任何 IPv4 字面量（内网/公网 IP 访问都算正常用法）
+    if h.endswith((".local", ".lan", ".internal", ".home", ".home.arpa")):
+        return True
+    try:
+        extra = str(get_setting("allowed_hosts", "") or "")
+    except Exception:
+        extra = ""
+    if extra:
+        allow = {x.strip().lower() for x in extra.split(",") if x.strip()}
+        if h in allow:
+            return True
+    return False
+
+
 def _auth_gate(handler, method):
     """鉴权门：返回 None=放行；否则返回 {"status":..,"json":..} 或 {"redirect":..}。"""
     path = urllib.parse.urlparse(handler.path).path
+    # 2026-09-29：Host 校验先于一切（DNS rebinding 防御，见 _host_allowed）
+    if not _host_allowed(handler):
+        if path.startswith("/api/"):
+            return {"status": 403, "json": {
+                "error": "Host 头不在允许列表（防 DNS rebinding）。"
+                         "如需用域名访问，请在「设置 → 安全」的 allowed_hosts 里加入该域名"}}
+        return {"status": 403, "json": {"error": "Host 头不在允许列表"}}
     # 2026-09-10 二次锁死修复（修改单#2）：静态资源零 DB。锁死期间静态文件
     # 必须照常返回——CSS/JS/字体/图标不含敏感数据，直接放行不查 session。
     if path.startswith(("/static/", "/fonts/", "/logo/")):
@@ -1572,11 +1826,27 @@ def _auth_gate(handler, method):
         return {"status": 403, "json": {"error": "需要管理员权限"}}
     if method in ("GET", "HEAD"):
         return None
+    if path in _AUTH_HANDLER_GUARDED:
+        return None
     if path in _AUTH_READ_POST_ALLOW or path == "/api/people":
         return None
     if family_content_ok:
         return None
     return {"status": 403, "json": {"error": "只读账户，无权执行此操作"}}
+
+
+def _guard_mutation(handler, what="此操作"):
+    """写分支前的角色校验（2026-09-29 安全审计）。
+
+    只给挂在 _AUTH_HANDLER_GUARDED 里的路由用：这些路由读/写混在一起，
+    鉴权门无法在不知道 body.action 的前提下判定，只能放行到 handler 里再拦。
+    返回 (ok, user)；不允许时 ok=False，调用方直接回 403。
+    guest 一律拒绝；family 允许（与「可看可管理」的角色描述一致）。
+    """
+    user, _ = _current_session_user(handler)
+    if not user or user.get("role") == "guest":
+        return False, user
+    return True, user
 
 
 def auth_users_list():
@@ -4581,10 +4851,13 @@ def search_by_category(cat, value, order=None, slim=False, offset=None, limit=No
     # 位置信息：首页照片墙在预览下方展示拍摄地（region=具体地点，province=省份）
     geo_info = {r["asset_id"]: (r["region"], r["province"]) for r in con.execute("SELECT asset_id, region, province FROM asset_geo_v0")}
     # 2026-09-04：来源归属 owner（瀑布流右键/拖动改分类时显示「当前属于谁」用）
+    # 2026-09-29 修复：条件原先写的是 mf.availability='original'，但该列的实际取值
+    # 只有 'online'（实库 16,553 行无一例外），'original' 是 variant_kind 列的值
+    # → 这条查询恒返回 0 行，「当前属于谁」永远空白。按语义改回 variant_kind。
     owner_info = {r["asset_id"]: r["owner_label"] for r in con.execute(
         """SELECT mf.asset_id, s.owner_label
            FROM media_file mf JOIN source s ON s.source_id=mf.source_id
-           WHERE mf.availability='original'""")}
+           WHERE mf.variant_kind='original'""")}
     # 2026-08-29 接上 Codex 的垃圾过滤表：截图/聊天导出/录屏/文档照标记 hidden，墙上不再出现
     filtered_ids = get_hidden_ids(con)
     assets = [{"id": r["asset_id"], "time": r["capture_time"], "type": media_info.get(r["asset_id"], ("photo",None,None))[0], "width": media_info.get(r["asset_id"], (None,None,None))[1], "height": media_info.get(r["asset_id"], (None,None,None))[2], "region": (geo_info.get(r["asset_id"]) or (None, None))[0], "province": (geo_info.get(r["asset_id"]) or (None, None))[1], "owner": owner_info.get(r["asset_id"]), "hidden": r["asset_id"] in filtered_ids} for r in rows]
@@ -6695,20 +6968,28 @@ def _res_guard_watchdog():
 #   transcode_rlimit_mb        单条整片转码的上限（比抽帧宽：要带 x264 的多帧缓存）
 #   video_concurrency          同时解几条 4K（按**内存**定，不按 CPU 核数定）
 #   load_budget                1 分钟负载预算：超了就退避，把机器让给正在刷图的人
-#   day_threads / night_threads 重活线程数（白天压着别卡站，夜里没人用才提速）
+#   day_threads / night_threads 重活线程数（白天压着别站，夜里没人用才提速）
+#   http_concurrency           同时在处理的 HTTP 连接上限（2026-09-29 补）：
+#                              原实现不限线程，慢客户端/爬虫/一堆设备同时刷图能把
+#                              线程数顶爆（每个线程默认 8MB 栈）。浏览器单域名
+#                              HTTP/1.1 只开 6 条并发，所以这个上限对正常使用无感。
 _MACHINE_TIERS = {
     "small":  dict(warn_mb=400,  danger_mb=220,  ffmpeg_rlimit_mb=800,
                    transcode_rlimit_mb=1000, video_concurrency=1,
-                   load_budget=2.0, day_threads=1, night_threads=1),
+                   load_budget=2.0, day_threads=1, night_threads=1,
+                   http_concurrency=16),
     "mid":    dict(warn_mb=700,  danger_mb=400,  ffmpeg_rlimit_mb=1500,
                    transcode_rlimit_mb=2200, video_concurrency=1,
-                   load_budget=3.0, day_threads=1, night_threads=2),
+                   load_budget=3.0, day_threads=1, night_threads=2,
+                   http_concurrency=24),
     "large":  dict(warn_mb=900,  danger_mb=500,  ffmpeg_rlimit_mb=2400,
                    transcode_rlimit_mb=2600, video_concurrency=2,
-                   load_budget=6.0, day_threads=2, night_threads=2),
+                   load_budget=6.0, day_threads=2, night_threads=2,
+                   http_concurrency=48),
     "xlarge": dict(warn_mb=1200, danger_mb=700,  ffmpeg_rlimit_mb=3000,
                    transcode_rlimit_mb=3200, video_concurrency=2,
-                   load_budget=8.0, day_threads=2, night_threads=4),
+                   load_budget=8.0, day_threads=2, night_threads=4,
+                   http_concurrency=96),
 }
 
 
@@ -7414,12 +7695,44 @@ def _persist_upload_asset(con, source_id, saved_path, media_type, w, h, duration
     return asset_id
 
 
-# 上传会话缓存：upload_id -> {path, media_type, image, faces, w, h}
+# 上传会话缓存：upload_id -> {path, media_type, image, faces, w, h, ts}
+# 2026-09-29 修复内存泄漏：value 里存的是**整张解码后的图像 ndarray**（外加人脸框），
+# 而唯一删除点是「确认认领」（_UPLOAD_SESSIONS.pop）。用户上传后关掉页面/换标签，
+# 条目就永久驻留 —— 在 3.9GB 的群晖上，几次放弃的上传就能吃掉几百 MB。
+# 对策：每次新上传前扫一遍，超过 TTL 或超过容量上限的会话连同落盘文件一起清掉。
 _UPLOAD_SESSIONS = {}
+_UPLOAD_SESSIONS_TTL = 1800       # 30 分钟没人认领就回收
+_UPLOAD_SESSIONS_MAX = 20         # 同时最多保留 20 个（超出按最旧淘汰）
+_UPLOAD_SESSIONS_LOCK = threading.Lock()
+
+
+def _sweep_upload_sessions():
+    """回收过期/超量的上传会话（含磁盘临时文件）。返回清理条数。"""
+    now = time.time()
+    with _UPLOAD_SESSIONS_LOCK:
+        stale = [k for k, v in _UPLOAD_SESSIONS.items()
+                 if now - float(v.get("ts") or 0) > _UPLOAD_SESSIONS_TTL]
+        if len(_UPLOAD_SESSIONS) - len(stale) > _UPLOAD_SESSIONS_MAX:
+            keep = sorted((k for k in _UPLOAD_SESSIONS if k not in stale),
+                          key=lambda k: float(_UPLOAD_SESSIONS[k].get("ts") or 0))
+            stale += keep[:len(keep) - _UPLOAD_SESSIONS_MAX]
+        for k in stale:
+            sess = _UPLOAD_SESSIONS.pop(k, None)
+            if not sess:
+                continue
+            try:
+                # 上传文件在 UPLOAD_DIR/<upload_id>/ 下，整个目录删掉
+                shutil.rmtree(UPLOAD_DIR / k, ignore_errors=True)
+            except Exception:
+                pass
+    if stale:
+        print(f"[upload] 回收过期上传会话 {len(stale)} 个", flush=True)
+    return len(stale)
 
 
 def handle_face_upload_preview(handler):
     """处理 POST /api/face/upload-preview：保存文件、检测人脸、返回预览。"""
+    _sweep_upload_sessions()
     ctype = handler.headers.get("Content-Type", "")
     if not ctype.startswith("multipart/form-data"):
         return {"error": "请使用 multipart/form-data 上传文件"}, 400
@@ -7439,7 +7752,8 @@ def handle_face_upload_preview(handler):
     faces = _detect_faces_upload(image)
     _UPLOAD_SESSIONS[upload_id] = {
         "path": str(saved_path), "media_type": media_type,
-        "image": image, "faces": faces, "w": w, "h": h, "duration": None
+        "image": image, "faces": faces, "w": w, "h": h, "duration": None,
+        "ts": time.time(),   # 2026-09-29：供 _sweep_upload_sessions 判过期
     }
     previews = []
     for idx, (face_arr, score) in enumerate(faces):
@@ -7577,6 +7891,22 @@ def _privacy_has_rows(con):
     """隐私相册是否有内容（决定 SQL 里要不要拼 privacy 排除条件）。"""
     try:
         return con.execute("SELECT COUNT(*) FROM privacy_v0").fetchone()[0] > 0
+    except sqlite3.OperationalError:
+        return False
+
+
+def _asset_is_private(con, asset_id):
+    """单个资产是否在隐私相册里（2026-09-29）。
+
+    GET 路由不受鉴权门的写操作白名单约束（门对 GET 一律放行），所以任何返回
+    内容元数据的 GET 接口都必须自己过这道门。列表类接口此前用 _privacy_has_rows
+    + 集合差集整体过滤，单条查询（如 /api/asset_info）漏了 —— 这里补单个判定。
+    """
+    if not asset_id:
+        return False
+    try:
+        return con.execute("SELECT 1 FROM privacy_v0 WHERE asset_id=? LIMIT 1",
+                           (asset_id,)).fetchone() is not None
     except sqlite3.OperationalError:
         return False
 
@@ -7970,6 +8300,12 @@ def compute_similar_groups(time_window=SIMILAR_TIME_WINDOW_SECONDS, min_group_si
     con.execute("DELETE FROM asset_similar_group_v0 WHERE COALESCE(engine,?) = ?",
                 (engine, engine))
 
+    # 2026-09-29 修复：group_id 是 asset_similar_group_v0 的**全局主键**，而上面的
+    # 清理只删本 engine 的行，两边口径不一致 → 换一档算法重扫时，另一档留下的
+    # sim_0000123 会和本次新插入的撞主键（实库 dual-v1 已占到 sim_0002451，
+    # 于是从第 493 组开始整批 INSERT 失败回滚）。group_id 前缀带上 engine 隔离命名空间。
+    _gprefix = re.sub(r"[^0-9A-Za-z]+", "_", str(engine or "default"))[:24] or "default"
+
     now = now_iso()
     stats = {"groups": 0, "assets": 0, "best_changed": 0}
     for idx, g in enumerate(groups):
@@ -7982,7 +8318,7 @@ def compute_similar_groups(time_window=SIMILAR_TIME_WINDOW_SECONDS, min_group_si
             scored.append((aid, s, r["capture_time"]))
         scored.sort(key=lambda x: -x[1])
         best_aid = scored[0][0]
-        group_id = f"sim_{idx:07d}"
+        group_id = f"sim_{_gprefix}_{idx:07d}"
         start_t = min(r["capture_time"] for r in g)
         end_t = max(r["capture_time"] for r in g)
         con.execute(
@@ -9871,6 +10207,19 @@ def _rebuild_scene_tags_locked():
         "SELECT asset_id FROM asset_geo_v0 WHERE COALESCE(is_coastal,0)=0")}
     try:
         scores = local_siglip_scores(all_texts)
+        # 2026-09-29 性能修复：原实现逐条 con.execute INSERT，整个 1.3 万资产 × 最多
+        # 28 标签的循环只在最后 commit 一次 —— SQLite 写锁被独占到全库打分结束
+        # （分钟级），期间前台任何写操作全部 busy 超时。改成攒够一批 executemany
+        # 提交一次，写锁持有时间压到毫秒级（与 check_new_files 每 200 条提交同一思路）。
+        _buf = []
+        _BATCH = 2000
+
+        def _flush():
+            if _buf:
+                con.executemany("INSERT OR IGNORE INTO scene_tag_v0 VALUES(?,?,?,?,?)", _buf)
+                con.commit()
+                _buf.clear()
+
         for aid, v in scores.items():
             vals = [float(x) for x in v]
             pos_vals = vals[:n_pos]
@@ -9885,17 +10234,19 @@ def _rebuild_scene_tags_locked():
                 # 正类之间不互斥(山+河同框可双挂), 只需压过全部负类(SIGLIP 原始 logit 很小,
                 # 绝对阈值无意义, 判别信号是相对负类的领先幅度)
                 if s > scene_neg_max + 0.02:
-                    con.execute("INSERT OR IGNORE INTO scene_tag_v0 VALUES(?,?,?,?,?)",
-                                (aid, tag, "SIGLIP", round(s, 4), now))
+                    _buf.append((aid, tag, "SIGLIP", round(s, 4), now))
                     counts[tag] = counts.get(tag, 0) + 1
+                    if len(_buf) >= _BATCH:
+                        _flush()
             # 物品: 压过全部负类(含"无突出物体"泛化负类), 按标签独立阈值
             for j, otag in enumerate(obj_tag_names):
                 s = vals[n_pos + j]
                 if s > obj_neg_max + _OBJECT_THRESHOLDS.get(otag, _OBJECT_DEFAULT_THRESHOLD):
-                    con.execute("INSERT OR IGNORE INTO scene_tag_v0 VALUES(?,?,?,?,?)",
-                                (aid, otag, "SIGLIP", round(s, 4), now))
+                    _buf.append((aid, otag, "SIGLIP", round(s, 4), now))
                     counts[otag] = counts.get(otag, 0) + 1
-        con.commit()
+                    if len(_buf) >= _BATCH:
+                        _flush()
+        _flush()
     except Exception as exc:
         print(f"[scene] SIGLIP 场景打分失败: {exc}")
 
@@ -11303,7 +11654,12 @@ class Handler(BaseHTTPRequestHandler):
                          "/api/models/catalog", "/api/settings/algos",
                          "/api/settings/objects",
                          "/api/vlm/autorun", "/api/vlm/run", "/api/vlm/status",
-                         "/api/tasks/config", "/api/tasks/warm", "/api/tasks/videolc"):
+                         "/api/tasks/config", "/api/tasks/warm", "/api/tasks/videolc",
+                         # 2026-09-29 修复：/api/dev/reload 的写分支就挂在下面这个
+                         # elif 链里，但路径没进这个元组 → 永远匹配不到、落到 404。
+                         # 上一版做的「设置面板开发模式开关」因此是个死开关（点不动），
+                         # 只能手改数据库。这里补上；本元组已被鉴权门划为 admin 专区。
+                         "/api/dev/reload"):
             length = int(self.headers.get("Content-Length", 0) or 0)
             try:
                 body = json.loads(self.rfile.read(length) or b"{}")
@@ -11534,8 +11890,20 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0) or 0)
             try:
                 body = json.loads(self.rfile.read(length) or b"{}")
-                result = crop_action(body)
-                status = 200
+                # 2026-09-29 安全审计：/api/crop 的 map 分支只读（访客可用），
+                # set/clear 分支写 crop_v0。原先整条路由躺在「只读 POST 白名单」里
+                # → 访客能改/删任意照片的二次构图框。这里按 action 分流拦截。
+                _action = str((body or {}).get("action") or "")
+                if _action not in ("", "map"):
+                    _ok, _u = _guard_mutation(self)
+                    if not _ok:
+                        result, status = {"error": "只读账户，无权修改裁切"}, 403
+                    else:
+                        result = crop_action(body)
+                        status = 200
+                else:
+                    result = crop_action(body)
+                    status = 200
             except Exception as exc:
                 print(f"[api-error] {self.path}: {exc}", flush=True)
                 result, status = {"error": str(exc)}, 400
@@ -11833,23 +12201,27 @@ class Handler(BaseHTTPRequestHandler):
                                         ensure_ascii=False).encode()); return
         if parsed.path == "/api/update/check":
             # 在线升级检查（登录即可看；应用仅 admin，见 do_POST）：本地包 + 远程 feed 取高版本
+            # 2026-09-29 安全审计：远程检查会真实发起外网请求，且回显 feed_url（更新源地址
+            # 属于部署内部信息）。原实现任意登录用户都能触发 → 访客可让服务器出网探测。
+            # 现在：非 admin 只看本地包，不碰网络、不回显 feed_url。
+            user, _ = _current_session_user(self)
+            is_admin = bool(user and user.get("role") == "admin")
             cand = update_best_package()
-            remote = update_check_remote()
+            remote = update_check_remote() if is_admin else None
             avail = None; src = None
             if cand and _ver_tuple(cand["version"]) > _ver_tuple(APP_VERSION):
                 avail, src = cand["version"], "local"
             if remote and _ver_tuple(remote["version"]) > _ver_tuple(APP_VERSION):
                 if avail is None or _ver_tuple(remote["version"]) > _ver_tuple(avail):
                     avail, src = remote["version"], "remote"
-            user, _ = _current_session_user(self)
             notes = (cand or {}).get("notes", "") if src == "local" else (remote or {}).get("notes", "") if src == "remote" else ""
             self.send_response(200); self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Access-Control-Allow-Origin", "*"); self.end_headers()
             self.wfile.write(json.dumps({"current": APP_VERSION, "available": avail, "source": src,
                                          "notes": notes,
                                          "remote_feed": remote["version"] if remote else None,
-                                         "feed_url": get_update_feed_url(),
-                                         "is_admin": bool(user and user.get("role") == "admin")},
+                                         "feed_url": get_update_feed_url() if is_admin else None,
+                                         "is_admin": is_admin},
                                         ensure_ascii=False).encode()); return
         if parsed.path == "/api/tasks":
             # 后台重活状态（2026-09-24）：Log 视频转码 + 缩略图预热。
@@ -11876,6 +12248,18 @@ class Handler(BaseHTTPRequestHandler):
             con = sqlite3.connect(DB, timeout=10)
             con.row_factory = sqlite3.Row
             try:
+                # 2026-09-29 安全审计：这是 GET 路由 → 鉴权门对 GET 一律放行，
+                # 于是任何登录用户（含访客）拿一个 asset_id 就能读到拍摄时间/地点/
+                # 人物姓名，**包括隐私相册里的照片**。隐私相册的承诺是「放进去就
+                # 看不见」，元数据泄露同样算泄露 —— 这里补内容级隐私门。
+                if _asset_is_private(con, aid):
+                    result = {"asset_id": aid, "private": True, "time": None,
+                              "region": None, "province": None, "tags": [], "persons": []}
+                    con.close()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Access-Control-Allow-Origin", "*"); self.end_headers()
+                    self.wfile.write(json.dumps(result, ensure_ascii=False).encode()); return
                 row = con.execute("SELECT capture_time FROM media_asset WHERE asset_id=?", (aid,)).fetchone()
                 g = con.execute("SELECT region, province FROM asset_geo_v0 WHERE asset_id=?", (aid,)).fetchone()
                 tags = [r[0] for r in con.execute(
@@ -12140,15 +12524,51 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+_FD_RESTART_MARK = DATA_DIR / "fd_watchdog_restart.marker"
+
+# 自拉起外壳：睡 N 秒后 execvp 换成服务本身（给旧进程留出退出/释放端口的时间）
+_SELF_RESPAWN_SHIM = ("import sys,time,os;time.sleep(float(sys.argv[1]));"
+                      "os.execvp(sys.argv[2], sys.argv[2:])")
+
+
+def _under_supervisor():
+    """谁负责在我们退出后把服务拉回来？返回 'docker' / 'launchd' / ''。
+
+    2026-09-29：看门狗原先一律 os._exit(3)，前提是「有人会拉起我」。这个前提
+    在容器里成立（compose 写了 restart: unless-stopped），但在 **Mac 直跑
+    uvicorn/python server.py** 的场景下不成立 —— 自毁之后服务就再也不回来了，
+    「防止假死」的手段反而变成「永久宕机」。
+    """
+    try:
+        if Path("/.dockerenv").exists() or os.environ.get("FM_IN_CONTAINER") == "1":
+            return "docker"
+    except Exception:
+        pass
+    if os.environ.get("XPC_SERVICE_NAME"):
+        return "launchd"
+    return ""
+
+
 def _fd_watchdog_loop():
-    """FD 泄漏看门狗：每 60s 检查进程文件描述符数，超上限 70% 主动退出，
-    由 launchd KeepAlive 拉起新进程，避免 FD 耗尽后服务假死一整天。"""
+    """FD 泄漏看门狗：每 60s 检查进程文件描述符数，超上限 70% 主动重启。
+
+    有守护者（docker / launchd）→ 照旧退出，交给它拉起；
+    没有 → 先 fork 一个延迟接班进程再退出，避免「自毁后无人复活」。
+    """
     try:
         import resource as _r
         soft, _hard = _r.getrlimit(_r.RLIMIT_NOFILE)
     except Exception:
         soft = 0
-    sys.stderr.write(f"[fd-watchdog] RLIMIT_NOFILE soft={soft}，启动 FD 监控\n")
+    _sup = _under_supervisor()
+    sys.stderr.write(f"[fd-watchdog] RLIMIT_NOFILE soft={soft}，守护者={_sup or '无（将自拉起）'}，启动 FD 监控\n")
+    if _FD_RESTART_MARK.exists():
+        sys.stderr.write("[fd-watchdog] 检测到上次是因 FD 超限重启的（marker 存在），"
+                         "请排查是否有连接未释放\n")
+        try:
+            _FD_RESTART_MARK.unlink()
+        except Exception:
+            pass
     while True:
         time.sleep(60)
         try:
@@ -12157,6 +12577,22 @@ def _fd_watchdog_loop():
             continue
         if soft and n > soft * 0.7:
             sys.stderr.write(f"[fd-watchdog] FD {n}/{soft} 超 70%，主动重启\n")
+            try:
+                _FD_RESTART_MARK.write_text(now_iso(), encoding="utf-8")
+            except Exception:
+                pass
+            if not _sup:
+                # 无人拉起：先安排接班的，再退出（5 秒足够旧进程释放端口）
+                try:
+                    _argv = [str(ROOT / "server.py")]
+                    _log = open(LOGS_DIR / "fd-watchdog-respawn.log", "a")
+                    subprocess.Popen([sys.executable, "-c", _SELF_RESPAWN_SHIM, "5",
+                                      sys.executable, *_argv],
+                                     cwd=str(ROOT), stdout=_log,
+                                     stderr=subprocess.STDOUT, start_new_session=True)
+                    sys.stderr.write("[fd-watchdog] 已安排 5 秒后自拉起接班进程\n")
+                except Exception as exc:
+                    sys.stderr.write(f"[fd-watchdog] 自拉起失败（将无人复活）: {exc}\n")
             os._exit(3)
 
 
@@ -12206,7 +12642,13 @@ def _dev_reload_enabled() -> bool:
 
 
 def _dev_reload_fingerprint():
-    """指纹：本文件 + static/ 下所有文件的 (mtime_ns, size)。"""
+    """指纹：本文件 + static/ 下所有文件的 (mtime_ns, size)。
+
+    2026-09-29：改为**排序后**输出。os.scandir 给的是「目录原始顺序」，POSIX 不保证
+    跨进程/跨文件系统一致（overlayfs、虚拟机共享目录 virtiofs/9p 都可能变），
+    一旦顺序漂移就会误判成「代码变了」→ 无限重载把自己打成重启循环。
+    排序后顺序恒定，只有真实的 mtime/size 变化才会触发。
+    """
     fp = []
     try:
         st = os.stat(__file__)
@@ -12224,7 +12666,18 @@ def _dev_reload_fingerprint():
                 fp.append((e.name, st.st_mtime_ns, st.st_size))
     except OSError:
         pass
-    return tuple(fp)
+    return tuple(sorted(fp))
+
+
+def _fp_diff(base, cur):
+    """指纹差异摘要（只用于日志：哪几个文件变了，避免以后再靠猜）。"""
+    a = {x[0]: x for x in base}
+    b = {x[0]: x for x in cur}
+    out = []
+    for k in sorted(set(a) | set(b)):
+        if a.get(k) != b.get(k):
+            out.append(f"{k}: {a.get(k)} -> {b.get(k)}")
+    return out[:5]
 
 
 def _dev_reload_loop():
@@ -12238,6 +12691,8 @@ def _dev_reload_loop():
         cur = _dev_reload_fingerprint()
         if cur == base:
             continue
+        for _d in _fp_diff(base, cur):
+            print(f"[dev-reload]   变化: {_d}", flush=True)
         base = cur
         time.sleep(2.0)        # 防抖：等编辑器/工具把文件写完，别半截就重载
         print("[dev-reload] 检测到代码变化，重新加载…", flush=True)
@@ -12331,9 +12786,41 @@ if __name__ == "__main__":
     bind_host = os.environ.get("FF_BIND", "127.0.0.1")
     # 2026-09-10 二次锁死修复：listen backlog 默认仅 5，首屏并发连接溢出会被
     # 直接丢弃（客户端表现为超时/失败）。提到 128。
+    # 2026-09-29：再加「同时在处理的连接数」上限 —— 光有 backlog 只挡住队列，
+    # 慢客户端仍会不断换成新线程（每线程 8MB 栈），线程数没有天花板。
     class _Server(ThreadingHTTPServer):
         request_queue_size = 128
         daemon_threads = True
+
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            try:
+                _cap = int(get_setting("http_concurrency", "") or 0)
+            except Exception:
+                _cap = 0
+            if _cap <= 0:
+                _cap = int(machine_profile().get("http_concurrency") or 24)
+            self._slots = threading.BoundedSemaphore(max(4, _cap))
+            print(f"[http] 并发处理上限 {max(4, _cap)}（超出则排队，backlog 128）", flush=True)
+
+        def process_request(self, request, client_address):
+            # 先占坑再开线程：坑满了 accept 循环就阻塞，由内核 backlog 兜底，
+            # 这样「同时活着的 worker 线程数」有硬上限。
+            self._slots.acquire()
+            try:
+                return super().process_request(request, client_address)
+            except BaseException:
+                self._slots.release()
+                raise
+
+        def shutdown_request(self, request):
+            try:
+                super().shutdown_request(request)
+            finally:
+                try:
+                    self._slots.release()
+                except ValueError:
+                    pass   # 已释放（理论上不会走到）
     server = _Server((bind_host, PORT), Handler)
     # 开发模式：代码改动自动重载（默认关，见 _dev_reload_loop）
     threading.Thread(target=_dev_reload_loop, daemon=True, name="dev-reload").start()

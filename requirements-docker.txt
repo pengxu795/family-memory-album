@@ -8,6 +8,10 @@
 PyYAML>=6.0          # DeepSeek 凭证文件解析（条件 import，缺了也不挡启动）
 pillow>=10.0         # 图片解码/缩略图（容器内无 sips，全靠 Pillow）
 pillow-heif>=0.13    # iPhone HEIC 解码（wheel 内置 libheif，无需系统库）
+# 2026-09-29：更新包 Ed25519 验签（verify_package_signature）。**可选**——缺了不会
+# 挡启动，只是升级通道退化为「域名白名单」级别校验并会在结果里说明。
+# 想开启完整验签：装本库 + 把发布方公钥放到 <数据目录>/update_pubkey.txt。
+cryptography>=42.0
 
 # ---- 人脸管线（backfill_faces_full.py 经 FACES_PYTHON 子进程拉起）----
 numpy>=1.26

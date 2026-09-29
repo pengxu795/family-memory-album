@@ -498,14 +498,14 @@ async function saveProvider(e, id) {
   _editingProv = null; toast('已保存'); loadLlm(); return false;
 }
 function provEditCard(p) {
-  return `<div class="card"><form onsubmit="return saveProvider(event,'${p.provider_id}')">
-    <div class="card-top"><span class="name">编辑：${p.name}</span></div>
+  return `<div class="card"><form onsubmit="return saveProvider(event,'${_jsAttr(p.provider_id)}')">
+    <div class="card-top"><span class="name">编辑：${_esc(p.name)}</span></div>
     <div class="fld" style="margin-top:var(--sp3)"><label>服务名称</label>
-      <input id="e-name" value="${p.name}"></div>
+      <input id="e-name" value="${_esc(p.name)}"></div>
     <div class="fld" style="margin-top:var(--sp3)"><label>服务地址</label>
-      <input id="e-url" value="${p.base_url}"></div>
+      <input id="e-url" value="${_esc(p.base_url)}"></div>
     <div class="fld" style="margin-top:var(--sp3)"><label>模型名称</label>
-      <input id="e-model" value="${p.model}"></div>
+      <input id="e-model" value="${_esc(p.model)}"></div>
     <div class="fld" style="margin-top:var(--sp3)"><label>API Key（留空 = 不改动）</label>
       <input id="e-key" type="password" placeholder="留空保持原来的密钥"></div>
     <div class="row" style="margin-top:var(--sp3)">
@@ -526,18 +526,18 @@ function providerCard(p, i, arr) {
     : { cls:'s-off', pill:'<span class="pill pill-off">已停用</span>' };
   const role = p.vision ? '看懂照片内容、回答你的提问' : '处理文字问答';
   return `<div class="card ${st.cls}">
-    <div class="card-top"><span class="name">${p.name}</span>${st.pill}</div>
+    <div class="card-top"><span class="name">${_esc(p.name)}</span>${st.pill}</div>
     <p class="card-what">负责：${role}</p>
-    <p class="card-note">模型：${p.model}</p>
-    <p class="card-note">密钥：${p.api_key_masked || '未填写'}${p.free ? ' · 免费额度' : ''}</p>
-    ${p.status ? `<p class="card-note" style="margin-top:var(--sp2)">最近情况：${p.status}</p>` : ''}
+    <p class="card-note">模型：${_esc(p.model)}</p>
+    <p class="card-note">密钥：${_esc(p.api_key_masked || '未填写')}${p.free ? ' · 免费额度' : ''}</p>
+    ${p.status ? `<p class="card-note" style="margin-top:var(--sp2)">最近情况：${_esc(p.status)}</p>` : ''}
     <div class="actions">
-      <span class="switch" title="${p.enabled?'停用':'启用'}"><input type="checkbox" ${p.enabled?'checked':''} onchange="providerEnable('${p.provider_id}',this.checked)"><span class="track"></span></span>
-      <button onclick="editProvider('${p.provider_id}')">编辑</button>
-      <button onclick="testProvider('${p.provider_id}')">测试</button>
-      <button onclick="moveProvider('${p.provider_id}','up')" title="调高优先级" ${i===0?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;vertical-align:-2px"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
-      <button onclick="moveProvider('${p.provider_id}','down')" title="调低优先级" ${i===arr.length-1?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;vertical-align:-2px"><path d="M12 5v14M19 12l-7 7-7-7"/></svg></button>
-      <button class="danger" onclick="delProvider('${p.provider_id}','${p.name}')">删除</button>
+      <span class="switch" title="${p.enabled?'停用':'启用'}"><input type="checkbox" ${p.enabled?'checked':''} onchange="providerEnable('${_jsAttr(p.provider_id)}',this.checked)"><span class="track"></span></span>
+      <button onclick="editProvider('${_jsAttr(p.provider_id)}')">编辑</button>
+      <button onclick="testProvider('${_jsAttr(p.provider_id)}')">测试</button>
+      <button onclick="moveProvider('${_jsAttr(p.provider_id)}','up')" title="调高优先级" ${i===0?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;vertical-align:-2px"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+      <button onclick="moveProvider('${_jsAttr(p.provider_id)}','down')" title="调低优先级" ${i===arr.length-1?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;vertical-align:-2px"><path d="M12 5v14M19 12l-7 7-7-7"/></svg></button>
+      <button class="danger" onclick="delProvider('${_jsAttr(p.provider_id)}','${_jsAttr(p.name)}')">删除</button>
     </div>
   </div>`;
 }
@@ -552,44 +552,53 @@ function renderLlm(d) {
 /* ================= 算法偏好 ================= */
 function _esc(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// 2026-09-29 安全审计：拼 onclick 里的 JS 字符串**不能**只做 HTML 转义 —— 🚫 错误做法：
+// _esc("x');alert(1)//") 得到 x&#39;);alert(1)//，而 HTML 解析器会把 &#39; 解回单引号，
+// 于是脚本照样逃出引号执行。必须先按 JS 规则转义（反斜杠/单引号），再做 HTML 实体转义，
+// 顺序不能反：先 JS 后 HTML。
+function _jsAttr(s) {
+  return String(s == null ? '' : s)
+    .replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 function renderAlgos(algos) {
   document.querySelector('#algoGrid').innerHTML = algos.map(a => {
     if (a.type === 'bool') {
       const on = String(a.value) === '1';
       return `<div class="card ${on?'s-on':'s-off'}">
-        <div class="card-top"><span class="name">${a.label}</span>
+        <div class="card-top"><span class="name">${_esc(a.label)}</span>
           <span class="pill ${on?'pill-on':'pill-off'}">${on?'已开启':'已关闭'}</span></div>
-        <p class="card-note">${a.desc}</p>
-        <div class="actions"><span class="switch"><input type="checkbox" ${on?'checked':''} onchange="setAlgo('${a.key}',this.checked)"><span class="track"></span></span></div>
+        <p class="card-note">${_esc(a.desc)}</p>
+        <div class="actions"><span class="switch"><input type="checkbox" ${on?'checked':''} onchange="setAlgo('${_jsAttr(a.key)}',this.checked)"><span class="track"></span></span></div>
       </div>`;
     }
     if (a.type === 'text') {
       return `<div class="card">
-        <div class="card-top"><span class="name">${a.label}</span>
+        <div class="card-top"><span class="name">${_esc(a.label)}</span>
           <span class="pill pill-info">${a.value ? '已设置' : '未设置'}</span></div>
-        <p class="card-note">${a.desc}</p>
+        <p class="card-note">${_esc(a.desc)}</p>
         <div class="actions"><input type="text" value="${_esc(a.value)}" placeholder="留空 = 不启用"
-          onchange="setAlgo('${a.key}',this.value)"></div>
+          onchange="setAlgo('${_jsAttr(a.key)}',this.value)"></div>
       </div>`;
     }
     if (a.type === 'textarea') {
       return `<div class="card">
-        <div class="card-top"><span class="name">${a.label}</span>
+        <div class="card-top"><span class="name">${_esc(a.label)}</span>
           <span class="pill pill-info">${(a.value||'').length ? '自定义' : '内置默认'}</span></div>
-        <p class="card-note">${a.desc}</p>
+        <p class="card-note">${_esc(a.desc)}</p>
         <textarea rows="5" style="width:100%;font-family:inherit;font-size:var(--fs-sm);padding:9px 11px;border:1px solid var(--line-2);border-radius:var(--radius-sm);margin-top:var(--sp3)"
-          onchange="setAlgo('${a.key}',this.value)">${_esc(a.value)}</textarea>
-        <div class="actions"><button onclick="setAlgo('${a.key}','')">恢复内置默认</button></div>
+          onchange="setAlgo('${_jsAttr(a.key)}',this.value)">${_esc(a.value)}</textarea>
+        <div class="actions"><button onclick="setAlgo('${_jsAttr(a.key)}','')">恢复内置默认</button></div>
       </div>`;
     }
     return `<div class="card">
-      <div class="card-top"><span class="name">${a.label}</span>
-        <span class="pill pill-info">${a.value}</span></div>
-      <p class="card-note">${a.desc}</p>
-      <div class="actions"><input type="range" min="${a.min}" max="${a.max}" step="${a.step}" value="${a.value}"
-        style="flex:1" onchange="setAlgo('${a.key}',this.value)"></div>
+      <div class="card-top"><span class="name">${_esc(a.label)}</span>
+        <span class="pill pill-info">${_esc(a.value)}</span></div>
+      <p class="card-note">${_esc(a.desc)}</p>
+      <div class="actions"><input type="range" min="${_esc(a.min)}" max="${_esc(a.max)}" step="${_esc(a.step)}" value="${_esc(a.value)}"
+        style="flex:1" onchange="setAlgo('${_jsAttr(a.key)}',this.value)"></div>
     </div>`;
   }).join('');
 }
@@ -638,15 +647,15 @@ async function moveProvider(id, dir) {
 async function loadObjects() {
   const d = await api('/api/settings/objects', {});
   if (d.error) return;
-  const chip = t => `<span class="pill pill-info" style="margin:2px">${t}</span>`;
+  const chip = t => `<span class="pill pill-info" style="margin:2px">${_esc(t)}</span>`;
   document.querySelector('#objBuiltin').innerHTML =
     '<div class="plainmeta">这些词可以直接在搜索框里用：</div>'
     + d.builtin.map(x => chip(x.tag)).join('');
   document.querySelector('#objCustom').innerHTML = d.custom.length
     ? d.custom.map(x => `<div class="card">
-        <div class="card-top"><span class="name">${x.tag}</span></div>
-        <p class="card-note">${x.text}</p>
-        <div class="actions"><button class="danger" onclick="delObject('${x.tag}')">删除</button></div>
+        <div class="card-top"><span class="name">${_esc(x.tag)}</span></div>
+        <p class="card-note">${_esc(x.text)}</p>
+        <div class="actions"><button class="danger" onclick="delObject('${_jsAttr(x.tag)}')">删除</button></div>
       </div>`).join('')
     : '<div class="plainmeta" style="margin-top:var(--sp3)">还没有自定义物品。点上面「＋ 添加一个自定义物品」，之后就能在搜索框用它找照片。</div>';
 }

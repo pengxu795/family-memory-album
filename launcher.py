@@ -68,6 +68,11 @@ if "--ff-worker" in sys.argv:
         "privacy": "privacy_auto_scan.py",
         # 2026-09-16：导入后增量富化（精确去重/画质/相似分组/择优/语义过滤）
         "enrich": "enrich.py",
+        # 2026-09-29 补：server.py 的 WORKER_SCRIPTS 早就有 videolc 这一档，但这里的
+        # 分发表没跟上 → 打包版（pyinstaller）里 sys.executable 是本二进制，
+        # `--ff-worker videolc` 会直接 KeyError 崩掉，Log 视频转码永远起不来。
+        # ★ 本字典与 server.py:WORKER_SCRIPTS、Dockerfile 的 COPY 清单必须三处同步。
+        "videolc": "transcode_log_videos.py",
     }
     script = BUNDLE_ROOT / scripts[key]
     sys.argv = [sys.argv[0]] + rest
