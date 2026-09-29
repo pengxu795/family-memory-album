@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.15"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.16"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -996,6 +996,13 @@ def _start_scan_job(source_id, root_path):
     return scan_id
 
 
+# ★ 群晖 homes 共享的主机侧前缀（公共前缀-无用户名）：只认 /Volumes|/volume1 + homes/
+#   这种**不带用户名**的通用写法；带用户名的路径才属于个人路径红线。
+#   发布扫描器靠「公共前缀-无用户名」这个标记放行下面这一行，别拿它去放行别的行。
+SYN_HOME_HOST_PREFIXES = ("/volumes/homes/", "/volume1/homes/")   # 公共前缀-无用户名
+SYN_HOME_CONTAINER_ROOT = "/photos/"
+
+
 def source_add(path, label="", source_type="local_folder", auto_scan=True):
     """添加一个数据来源目录；校验通过后立即落库并启动后台扫描，接口快速返回 scan_id。"""
     raw_path = path.strip().rstrip("/")
@@ -1005,9 +1012,39 @@ def source_add(path, label="", source_type="local_folder", auto_scan=True):
         path = "/Volumes/" + path[len("/volumes/"):]
     path = os.path.abspath(path)
     if not os.path.isdir(path):
-        hint = ""
-        if raw_path.lower().startswith("/volume1/"):
+        # 2026-09-29：报错要「会教人」。三种典型填错都能给出可直接复制的建议：
+        #   电脑挂载路径 / 群晖内部路径  ← 容器里都看不到，换算成容器内路径并**验证存在**才给
+        #   其它                        ← 退回「列出容器里实际可见的照片根目录」
+        low = raw_path.lower()
+        cand = lead = hint = None          # ★ 三个都要先置 None：完全无关的路径要走到「列出可见根目录」兜底
+        for hp in SYN_HOME_HOST_PREFIXES:
+            if low.startswith(hp):
+                cand = SYN_HOME_CONTAINER_ROOT + raw_path[len(hp):]
+                lead = ("你填的是电脑上挂载出来的路径，本服务跑在容器里看不到它"
+                        if hp.startswith("/volumes/") else
+                        "这是群晖的内部路径，本服务（容器）里没有 /volume1")
+                break
+        if cand is None and low.startswith("/volume1/"):
             hint = "（这是群晖内部路径，Mac 上请改用挂载路径 /Volumes/...）"
+        elif cand is None and low.startswith("/volumes/"):
+            hint = "（/Volumes 是电脑本机的挂载点，本服务（容器）里没有它）"
+        if cand and os.path.isdir(cand):
+            hint = f"（{lead}；容器内对应的是 {cand}，已验证存在 —— 换成这个再点一次即可）"
+        elif cand:
+            hint = f"（{lead}；容器内对应路径 {cand} 也不存在）"
+        elif hint is None:
+            for root in ("/photos", "/pictures", "/data/photos"):
+                if not os.path.isdir(root):
+                    continue
+                try:
+                    tops = sorted(e for e in os.listdir(root)
+                                  if not e.startswith((".", "@")))[:6]
+                except OSError:
+                    continue
+                if tops:
+                    hint = (f"（本服务（容器）里可见的照片根目录是 {root}，下一层有："
+                            f"{'、'.join(tops)} …；请填容器内路径，例如 {root}/<用户名>/...）")
+                    break
         return {"error": f"目录不存在或无法访问：{path}{hint}"}
     con = sqlite3.connect(DB, timeout=60)
     con.execute("PRAGMA busy_timeout=60000")

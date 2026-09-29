@@ -89,6 +89,10 @@ PATTERNS = {
 }
 # 上面「家庭坐标」命中的其实是设置项键名与界面文案，属安全项，单独放行
 SAFE_HITS = {"家庭坐标": {"home_lat", "home_lon", "家坐标"}}
+# 「个人路径」的例外：server.py 里群晖 homes 共享的**公共前缀常量**（不带用户名）。
+#   靠「公共前缀-无用户名」这个标记精确放行常量那一行 —— 千万别把标记改成宽泛的词，
+#   否则 /volume1/homes/<账号>/... 这种真·个人路径也会被放过去。
+SAFE_HITS["个人路径"] = {"公共前缀-无用户名"}
 
 EXCLUDE_FILE = {".DS_Store", "quality-demo.html", "test-similar.html", "ab-review.html"}
 EXCLUDE_DIR = {"design-preview", "design-notes"}

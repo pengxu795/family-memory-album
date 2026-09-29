@@ -1,8 +1,8 @@
 {
- "version": "1.0.15",
- "file": "family_memory_update_v1.0.15.zip",
- "md5": "262347b837af1cf8f7c4b864fe1efe2e",
- "size": 1432528,
- "notes": "修复 Log 转码残留清理形同虚设（清理原先绑在转码任务内部，待办清零后永不执行，线上实测积压 13 个/276MB 长达 5 天），改由服务端每 10 分钟兜底清扫；后台任务面板补「已完成/总数」与状态字段，不再把「全部转完」和「卡住」显示成一个样；转码看门狗跳过时打印原因",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.15/family_memory_update_v1.0.15.zip"
+ "version": "1.0.16",
+ "file": "family_memory_update_v1.0.16.zip",
+ "md5": "3e44939405b1108736212f31f1f733c7",
+ "size": 1433347,
+ "notes": "添加照片来源时填错路径的报错改为「会教人」：识别 Mac 挂载路径与群晖内部路径，自动换算成容器内的 /photos/... 并验证存在后给出可直接复制的正确路径；换算不出时列出容器里实际可见的照片根目录",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.16/family_memory_update_v1.0.16.zip"
 }
