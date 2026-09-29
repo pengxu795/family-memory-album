@@ -1,8 +1,8 @@
 {
- "version": "1.0.14",
- "file": "family_memory_update_v1.0.14.zip",
- "md5": "54188d8382bbb4d5e0f5c1c05592f635",
- "size": 1429521,
- "notes": "全项目代码审查修复 28 项：安全（接口越权、隐私资产泄露、存储型 XSS、Host 校验、升级包验签）、功能（归属查询、相似分组主键冲突、worker 脚本未打包）、稳定性（上传会话泄漏、看门狗自愈、并发限流）",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.14/family_memory_update_v1.0.14.zip"
+ "version": "1.0.15",
+ "file": "family_memory_update_v1.0.15.zip",
+ "md5": "262347b837af1cf8f7c4b864fe1efe2e",
+ "size": 1432528,
+ "notes": "修复 Log 转码残留清理形同虚设（清理原先绑在转码任务内部，待办清零后永不执行，线上实测积压 13 个/276MB 长达 5 天），改由服务端每 10 分钟兜底清扫；后台任务面板补「已完成/总数」与状态字段，不再把「全部转完」和「卡住」显示成一个样；转码看门狗跳过时打印原因",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.15/family_memory_update_v1.0.15.zip"
 }

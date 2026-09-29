@@ -25,6 +25,7 @@ server.py 的 /orig 路由检测到转码文件后自动优先返回 → 转好�
 """
 import argparse
 import os
+import re
 import resource
 import sqlite3
 import subprocess
@@ -36,6 +37,9 @@ DATA_DIR = os.environ.get("FF_DATA_DIR", "/data")
 DB = os.path.join(DATA_DIR, "family_memory.db")
 OUT_DIR = os.path.join(DATA_DIR, "videos_lc")
 FFMPEG = os.environ.get("FFMPEG_BIN") or "ffmpeg"
+# 半成品文件名：out + ".tmp<pid>"（见下方 transcode_one）。严格匹配，
+# 与服务端 _sweep_videolc_tmp() 用同一套规则，避免误删目录里的无关文件。
+_TMP_NAME_RE = re.compile(r"^[0-9a-f]{24}_lc\.mp4\.tmp\d+$")
 
 # 复用 server.py 的还原参数（_logcolor_vf / logcolor_for / VIDEO_LC_DIR）
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) or "/app")
@@ -150,11 +154,19 @@ def _cleanup_tmp_orphans(max_age_sec=3600):
     转码中途被杀（护栏熔断 / 容器重启 / 断电）会留下 out + .tmp<pid>；而重跑时
     pid 变了 → 生成**新的** tmp 文件，老的永远没人管。实测已积 12 个 / 263MB。
     只删超过 1 小时没被碰过的，避免误删正在写的活动转码。
+
+    ★ 但**这段清理只在 worker 被拉起时才跑** —— 待办清零后 worker 再也不启动，
+      残留就永久堆着（线上实测躺了 5 天）。所以服务端另有 `_sweep_videolc_tmp()`
+      跑在 10 分钟一次的后台循环里，那份才是真正兜底的。这里保留一份是为了
+      「单独手跑这个脚本」时也能顺手清。
+    匹配用严格正则（而不是 glob "*.tmp*"），避免哪天目录里出现别的含 tmp 的文件被误删。
     """
     removed = nbytes = 0
     try:
-        for p in Path(OUT_DIR).glob("*.tmp*"):
+        for p in Path(OUT_DIR).iterdir():
             try:
+                if not _TMP_NAME_RE.match(p.name) or not p.is_file():
+                    continue
                 if time.time() - p.stat().st_mtime < max_age_sec:
                     continue
                 nbytes += p.stat().st_size

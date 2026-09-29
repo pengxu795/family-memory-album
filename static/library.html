@@ -2401,7 +2401,14 @@ async function refreshTasks(){try{
   const sw=(id,on)=>{const e=document.querySelector(id);if(e)e.checked=!!on};
   sw('#warmSw',d.warm&&d.warm.enabled);sw('#vcSw',d.videolc&&d.videolc.enabled);sw('#guardSw',d.res&&d.res.enabled);
   const w=d.warm||{};set('#warmSub',w.running?`正在预热 ${w.done}/${w.total}${w.total?`（${Math.round(w.done/w.total*100)}%）`:''}`:`预热巡检：只补真正缺缓存的${w.last_at?`（上次 ${w.last_at.slice(5,16)}：${w.last_result||''}）`:''}`);
-  const v=d.videolc||{};set('#vcSub',v.running?'正在转码中':(v.pending>0?`待转码 ${v.pending} 条`:'已全部转完'));
+  const v=d.videolc||{};
+  // 2026-09-29：把 total/done 显出来。原先只有 pending，于是「已全部转完」与「卡住不动」
+  // 看起来一样（都是静默），排障时极易误判。state 由服务端给，前端只负责措辞。
+  set('#vcSub', v.state==='running' ? `正在转码中 · 已完成 ${v.done||0}/${v.total||0}`
+             : v.state==='pending' ? `待转码 ${v.pending} 条（已完成 ${v.done||0}/${v.total||0}）`
+             : v.state==='done'    ? `已全部转完 · ${v.done||0}/${v.total||0}`
+             : v.state==='empty'   ? '暂无可转的 Log 视频'
+             : (v.running?'正在转码中':(v.pending>0?`待转码 ${v.pending} 条`:'已全部转完')));
   const r=d.res||{};const total=r.total_mb||0,avail=r.avail_mb||0;
   if(total){const pct=Math.round(avail/total*100);const bar=document.querySelector('#resBar');if(bar){bar.style.width=pct+'%';bar.className=avail<(r.danger_mb||0)?'danger':(avail<(r.warn_mb||0)?'warn':'')}
     set('#resLine',`可用 ${avail}MB / 共 ${total}MB（${pct}%）· 负载 ${(r.load1||0).toFixed(1)}`);

@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.14"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.15"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -174,8 +174,70 @@ def _purge_asset_cache(asset_ids):
     return moved
 
 
+# ---- /data/videos_lc 里的「半成品 / 旧命名」残留清理（2026-09-29）----
+# 背景（线上实测踩出来的）：P1-8 的清理原先写在 transcode_log_videos.py 的 main() 里，
+# 于是**只有转码任务真的被拉起时才会扫一遍**。而待办清零之后 worker 再也不会启动，
+# 残留就永久堆在磁盘上 —— 线上实测积了 13 个 / 276MB，最老的躺了 5 天。
+# 结论：清理必须与「有没有活干」解耦，搬到服务端常驻循环里。
+# 只认两个**严格**文件名模式，其余一律不碰（@eaDir 是群晖系统目录、.DS_Store 是 SMB 垃圾，
+# 都不是我们的东西；乱删会踩到 NAS 的系统元数据）。
+_LC_TMP_RE = re.compile(r"^[0-9a-f]{24}_lc\.mp4\.tmp\d+$")       # 现行：out + ".tmp<pid>"
+_LC_LEGACY_RE = re.compile(r"^asset_[0-9a-f]{24}\.mp4$")          # 早期命名，产物本应叫 <id>_lc.mp4
+
+
+def _sweep_videolc_tmp(max_age_sec=3600):
+    """清 /data/videos_lc 里的半成品与旧命名残留，返回 (清掉几个, 释放多少字节)。
+
+    `max_age_sec` 是「别抢正在写的文件」的保险：转码中途被杀才会留 .tmp，
+    一小时内改动的可能是活着的进程正在写，跳过。
+    """
+    d = VIDEO_LC_DIR
+    if not d.is_dir():
+        return 0, 0
+    now = time.time()
+    n, freed = 0, 0
+    try:
+        entries = list(d.iterdir())
+    except OSError:
+        return 0, 0
+    for p in entries:
+        name = p.name
+        is_tmp = bool(_LC_TMP_RE.match(name))
+        is_legacy = bool(_LC_LEGACY_RE.match(name))
+        if not (is_tmp or is_legacy):
+            continue
+        target = p
+        if is_legacy:
+            # 旧命名的文件只有在「正式产物已存在」时才敢删 —— 否则宁可留着，
+            # 万一它是某条视频唯一的产物，删了就白转一遍 4K。
+            proper = d / (name[len("asset_"):-len(".mp4")] + "_lc.mp4")
+            if not proper.exists():
+                continue
+            target = proper            # 用正式产物的 mtime 判断新鲜度
+        try:
+            if not p.is_file():
+                continue
+            st = target.stat()
+            if now - st.st_mtime < max_age_sec:
+                continue
+            size = p.stat().st_size
+            p.unlink()
+            n += 1
+            freed += size
+        except OSError:
+            continue
+    return n, freed
+
+
 def _cleanup_orphan_cache():
     """启动后台清理：库里已不存在的资产残留的缓存文件（如移除来源后遗留的缩略图）。"""
+    # 顺带把 Log 转码的半成品清掉（升级/重启的那一刻就生效，不用等转码任务被拉起）
+    try:
+        _n, _freed = _sweep_videolc_tmp()
+        if _n:
+            print(f"[cache-cleanup] 清理 Log 转码残留 {_n} 个 / {_freed/1e6:.1f}MB", flush=True)
+    except Exception as exc:
+        print(f"[cache-cleanup] 清理 Log 转码残留失败（忽略）: {exc}", flush=True)
     try:
         con = sqlite3.connect(DB, timeout=30)
         assets = {r[0] for r in con.execute("SELECT asset_id FROM media_asset")}
@@ -2050,10 +2112,18 @@ def init_start_scan(path):
 # 全量转码要跑好几个小时，而容器重启 / 在线升级 / OOM 都会把它杀掉，
 # 所以常驻一个看门狗：有活儿且没在跑就自动续上，不需要人工记着拉起。
 _VIDEO_LC_SCRIPT = ROOT / "transcode_log_videos.py"
+# 上一次「没启动」的原因，用于日志去重（同一原因只打一次；见 _videolc_watchdog）
+_VIDEOLC_LAST_SKIP = None
 
 
-def videolc_pending_count():
-    """待转码条数：is_log=1 的视频里还没有产物（或产物 0 字节）的。"""
+def videolc_progress():
+    """(总数, 已完成, 待办) —— 一次扫描算齐，供状态接口与面板用。
+
+    2026-09-29 补：原先只有 pending 一个数，于是「已全部转完」和「卡住不动」
+    在界面上长得一模一样（都是 pending=0 或都不动），本人都被骗过一次 ——
+    看到的最后一行进度是跑到一半的日志，误判成「被预热饿死了 4 天」。
+    把 total / done 一起暴露出来，一眼就能分辨。
+    """
     try:
         con = sqlite3.connect(DB, timeout=10)
         con.row_factory = sqlite3.Row
@@ -2063,17 +2133,21 @@ def videolc_pending_count():
                               WHERE lc.is_log = 1 AND ma.media_type = 'video'""").fetchall()
         con.close()
     except Exception:
-        return 0            # 表还没迁 / 库忙 → 当没活儿，下轮再看
-    n = 0
+        return 0, 0, 0      # 表还没迁 / 库忙 → 当没活儿，下轮再看
+    done = 0
     for r in rows:
         f = VIDEO_LC_DIR / (str(r["asset_id"])[6:] + "_lc.mp4")
         try:
             if f.exists() and f.stat().st_size > 0:
-                continue
+                done += 1
         except OSError:
             pass
-        n += 1
-    return n
+    return len(rows), done, len(rows) - done
+
+
+def videolc_pending_count():
+    """待转码条数：is_log=1 的视频里还没有产物（或产物 0 字节）的。"""
+    return videolc_progress()[2]
 
 
 def videolc_run(trigger="manual"):
@@ -2091,14 +2165,25 @@ def videolc_run(trigger="manual"):
     if r.get("started"):
         set_setting("videolc_last_run_at", now_iso())
         set_setting("videolc_last_trigger", trigger)
+        set_setting("videolc_last_expected", str(pend))   # 本轮该干多少条（面板显示"转完 N 条"用）
     return r
 
 
 def videolc_status():
     """转码进度（界面 / 排障用）。"""
+    total, done, pend = videolc_progress()
+    running = bool(_pgrep(r"transcode_log_videos\.py"))
+    if running:
+        state = "running"
+    elif total == 0:
+        state = "empty"          # 一条 Log 视频都没识别出来（可能还没跑色彩分析）
+    elif pend == 0:
+        state = "done"           # 全转完了 —— 与"卡住"区分开
+    else:
+        state = "pending"
     return {"enabled": get_setting("videolc_autorun_enabled", "1") == "1",
-            "pending": videolc_pending_count(),
-            "running": bool(_pgrep(r"transcode_log_videos\.py")),
+            "total": total, "done": done, "pending": pend, "state": state,
+            "running": running,
             "last_run_at": get_setting("videolc_last_run_at", ""),
             "last_trigger": get_setting("videolc_last_trigger", "")}
 
@@ -2141,16 +2226,35 @@ def _videolc_watchdog():
     首轮延迟 3 分钟 —— 避开启动期的扫描/富化，别跟它们抢 CPU（这台 NAS
     只有 4 核，ffmpeg 全速会拖慢整站，见 09-24 的转码降核修复）。
     """
+    global _VIDEOLC_LAST_SKIP
     time.sleep(180)
     while True:
         try:
+            # 顺手扫一遍转码残留：这件事**必须与「有没有活干」解耦**。
+            # 原先写在 worker 里 → 待办清零后 worker 不再启动 → 残留永久堆积
+            # （线上实测 13 个 / 276MB 躺了 5 天）。放这里每 10 分钟一次。
+            try:
+                _n, _freed = _sweep_videolc_tmp()
+                if _n:
+                    print(f"[videolc] 清理转码残留 {_n} 个 / {_freed/1e6:.1f}MB", flush=True)
+            except Exception as exc:
+                print(f"[videolc] 清理残留失败（忽略）: {exc}", flush=True)
             # 与预热互斥：两个都是 4K 解码，同时跑内存必然吃紧（09-24 风暴教训）。
             # 注意不能用 continue——会跳过末尾 sleep 变成忙循环，本轮不拉即可。
             if (not WARM_STATE.get("running")
                     and get_setting("videolc_autorun_enabled", "1") == "1"):
                 r = videolc_run(trigger="autorun")
                 if r.get("started"):
+                    _VIDEOLC_LAST_SKIP = None
                     print(f"[videolc] 看门狗自动续跑转码（欠 {r.get('pending')} 条）", flush=True)
+                else:
+                    # 2026-09-29：原先「跳过」是彻底静默的 —— 日志里整整 4 天没有一条
+                    # [videolc]，从外面看与「线程挂了」无法区分（本人就这么误判过一次）。
+                    # 改成「同一个原因只说一次」，既有交代又不刷屏。
+                    why = r.get("skipped") or r.get("error") or "未知原因"
+                    if why != _VIDEOLC_LAST_SKIP:
+                        _VIDEOLC_LAST_SKIP = why
+                        print(f"[videolc] 本轮未启动：{why}", flush=True)
         except Exception as exc:
             print(f"[videolc] watchdog error: {type(exc).__name__}: {exc}", flush=True)
         time.sleep(600)
