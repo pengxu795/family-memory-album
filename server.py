@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.25"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.26"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -11051,10 +11051,20 @@ def models_status():
     ]
 
     faces_pct = round(faces_done * 100 / total, 1) if total else 0
+    # 2026-09-30：富化流水线此前没有任何界面入口（/api/enrich/* 零前端引用，死功能）。
+    # 补进「模型与任务」面板：状态/欠账/上次运行 + 手动触发 + 自动开关。
+    en = enrich_status()
     tasks = [
         {"key": "faces", "name": "人脸检测 + 身份归属", "resource": "CPU",
          "running": faces_running, "progress": {"done": faces_done, "total": total, "pct": faces_pct},
          "extra": f"已检出 {faces_total} 张人脸 · 处理 {faces_done}/{total}", "manual": True},
+        {"key": "enrich", "name": "智能整理", "resource": "CPU",
+         "running": en["running"], "auto_enabled": en["enabled"],
+         "blur_missing": max(0, en["blur_missing"]),
+         "filtered_assets": en["filtered_assets"],
+         "last_run_at": en["last_run_at"],
+         "extra": f"待体检 {max(0, en['blur_missing'])} 张 · 已自动归档 {en['filtered_assets']} 张",
+         "manual": True},
         {"key": "vlm", "name": "VLM 图像描述", "resource": "GPU/内存",
          "running": vlm_running, "pending": vlm_pending_count(), "desc_done": desc_n,
          "auto_enabled": vlm["enabled"], "auto_interval_min": vlm["interval_min"],
@@ -11085,7 +11095,7 @@ def models_status():
 
 
 def models_toggle(body):
-    """开关自动任务。key ∈ {vlm_auto, autoscan}。"""
+    """开关自动任务。key ∈ {vlm_auto, autoscan, enrich}。"""
     key = (body.get("key") or "").strip()
     # 2026-09-02 修复: bool("0") 是 True(非空串), 原实现传 enabled=0 时开关反而被打开。
     raw = body.get("enabled")
@@ -11094,6 +11104,10 @@ def models_toggle(body):
         return vlm_autorun_config(enabled=1 if enabled else 0)
     if key == "autoscan":
         return autoscan_config(enabled=1 if enabled else 0)
+    if key == "enrich":
+        # 2026-09-30：富化开关此前没有落点（开关打上也不生效 = 死开关），补上。
+        set_setting("enrich_enabled", "1" if enabled else "0")
+        return {"enabled": enabled, "key": "enrich"}
     return {"error": f"未知开关 {key}"}
 
 

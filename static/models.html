@@ -395,6 +395,7 @@ const TASK_TEXT = {
   scene:    { name:'场景与物品标签', what:'标出照片里有什么（海边、狗、生日蛋糕…），让关键词搜索更准。' },
   geo:      { name:'拍摄地点核对',   what:'照片没有定位信息时，用画面线索推断大致拍摄地，防止地点标错。' },
   autoscan: { name:'自动收录新照片', what:'定时查看照片来源，有新照片就自动加进相册。' },
+  enrich:   { name:'智能整理',       what:'新照片进来后自动做体检：清晰度判定、重复照片分组、截图等自动归档，保持相册整齐。' },
 };
 function taskState(t) {
   if (t.running)      return { cls:'s-run', pill:'<span class="pill pill-run">正在工作</span>' };
@@ -424,6 +425,13 @@ function taskCard(t) {
   } else if (t.key === 'geo') {
     body = `<div class="pct">逐日核对拍摄地点</div>`;
     ops = `<button onclick="runGeo()" ${t.running?'disabled':''}>${t.running?'核对中…':'立即核对'}</button>`;
+  } else if (t.key === 'enrich') {
+    // 2026-09-30：富化流水线此前没有界面入口（后台默默跑，用户看不到也触发不了）。
+    body = `<div class="pct">待体检 ${t.blur_missing.toLocaleString()} 张 · 已自动归档 ${t.filtered_assets.toLocaleString()} 张</div>`;
+    if (t.last_run_at) body += `<div class="last">上次整理：${t.last_run_at.slice(0,19).replace('T',' ')}</div>`;
+    ops = `<button onclick="runEnrich()" ${t.running?'disabled':''}>${t.running?'整理中…':'立即整理'}</button>`
+        + `<span class="switch"><input type="checkbox" ${t.auto_enabled?'checked':''} onchange="toggle('enrich',this.checked)"><span class="track"></span></span>`
+        + `<span class="swlabel">自动</span>`;
   } else if (t.key === 'autoscan') {
     body = `<div class="pct">有新照片就自动加进来</div>`;
     ops = `<span class="switch"><input type="checkbox" ${t.auto_enabled?'checked':''} onchange="toggle('autoscan',this.checked)"><span class="track"></span></span>`
@@ -717,6 +725,7 @@ async function runScene() {
   await api('/api/scene/rebuild', {}); load();
 }
 async function runGeo() { await api('/api/geo/vision-verify', { force: true }); load(); }
+async function runEnrich() { await api('/api/enrich/run', {}); load(); }
 
 load(); loadLlm(); loadObjects();
 setInterval(load, 5000);
