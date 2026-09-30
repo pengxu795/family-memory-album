@@ -352,14 +352,18 @@ def gen_signing_key(key_path):
 
 
 def write_manifest(version, name, md5, size, notes, sig=None):
+    tag = version if version.startswith("v") else "v" + version
     man = {
         "version": version,
         "file": name,
         "md5": md5,
         "size": size,
         "notes": notes,
+        # 2026-09-30 修复：tag 必须带 v 前缀（git_release 建的 tag 就是 vX.Y.Z）。
+        # 此前写成 download/1.0.28/...，GitHub 按 tag 精确匹配 → 404，
+        # 服务端 /api/update/fetch 一直下载失败（今天 v1.0.28 升级时线上实锤）。
         "url": "https://github.com/pengxu795/family-memory-album/releases/download/%s/%s"
-               % (version, name),
+               % (tag, name),
     }
     if sig:
         man["sig"] = sig          # Ed25519(sha256(zip))，服务端 verify_package_signature 校验
