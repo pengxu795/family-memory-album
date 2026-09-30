@@ -1,8 +1,8 @@
 {
- "version": "1.0.28",
- "file": "family_memory_update_v1.0.28.zip",
- "md5": "417535d23fb89634fcd5f859c27832be",
- "size": 1434051,
- "notes": "修复：更新包白名单改为从 worker 表自动派生（铺路版），下版起 worker 脚本修复可随包分发",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/v1.0.28/family_memory_update_v1.0.28.zip"
+ "version": "1.0.29",
+ "file": "family_memory_update_v1.0.29.zip",
+ "md5": "12ac50614985d7d7175afdd460a7bf12",
+ "size": 1503127,
+ "notes": "修复：来源「关闭自动过滤」真正全量生效——更新包随带全部 worker 脚本（enrich.py 此前分发不到线上）；更新下载 404 时自动回退更新源目录重试",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/v1.0.29/family_memory_update_v1.0.29.zip"
 }

@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.28"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.29"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -1846,41 +1846,52 @@ def update_fetch_remote(man):
     dst = UPDATE_DIR / fname
     UPDATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_suffix(f".{threading.get_ident()}.dl.tmp")
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "FamilyMemory/" + APP_VERSION})
-        h = hashlib.md5()
-        n = 0
-        with _update_opener().open(req, timeout=60) as r, open(tmp, "wb") as f:
-            while True:
-                chunk = r.read(1 << 16)
-                if not chunk:
-                    break
-                n += len(chunk)
-                if n > 500 * 1024 * 1024:
-                    raise ValueError("更新包超过 500MB 上限")
-                h.update(chunk)
-                f.write(chunk)
-        if h.hexdigest() != man.get("md5"):
-            tmp.unlink(missing_ok=True)
-            return False, "下载包 md5 校验失败（源可能被篡改或下载不完整）"
-        # 2026-09-29：密码学验签（有 cryptography 时强制；缺库则降级并在结果里说明）
-        sig_ok, sig_msg = verify_package_signature(tmp, man)
-        if not sig_ok:
-            tmp.unlink(missing_ok=True)
-            return False, f"更新包签名校验失败：{sig_msg}"
-        with zipfile.ZipFile(tmp) as zf:
-            inner = json.loads(zf.read("manifest.json").decode("utf-8"))
-        if inner.get("version") != man.get("version"):
-            tmp.unlink(missing_ok=True)
-            return False, f"包内版本 {inner.get('version')} 与源声明 {man.get('version')} 不一致"
-        os.replace(tmp, dst)
-        return True, f"下载完成 {n/1024/1024:.1f}MB（{sig_msg}）"
-    except Exception as e:
+    # 2026-09-30 兜底：manifest 里的 url 历史上出过 tag 少 v 前缀的事故（404）。
+    # 两个候选都试：manifest 声明的 url → 「更新源目录 + 文件名」。无论用哪个候选
+    # 下载，落盘前都要过同一套 md5 + 验签 + 包内版本校验，安全性不打折。
+    feed_url = feed.rstrip("/") + "/" + fname
+    candidates = [url] if url == feed_url else [url, feed_url]
+    last_err = None
+    for u in candidates:
+        _uok2, _why2 = _update_url_ok(u, feed)
+        if not _uok2:
+            continue
         try:
-            tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
-        return False, f"下载失败: {e}"
+            req = urllib.request.Request(u, headers={"User-Agent": "FamilyMemory/" + APP_VERSION})
+            h = hashlib.md5()
+            n = 0
+            with _update_opener().open(req, timeout=60) as r, open(tmp, "wb") as f:
+                while True:
+                    chunk = r.read(1 << 16)
+                    if not chunk:
+                        break
+                    n += len(chunk)
+                    if n > 500 * 1024 * 1024:
+                        raise ValueError("更新包超过 500MB 上限")
+                    h.update(chunk)
+                    f.write(chunk)
+            if h.hexdigest() != man.get("md5"):
+                tmp.unlink(missing_ok=True)
+                return False, "下载包 md5 校验失败（源可能被篡改或下载不完整）"
+            # 2026-09-29：密码学验签（有 cryptography 时强制；缺库则降级并在结果里说明）
+            sig_ok, sig_msg = verify_package_signature(tmp, man)
+            if not sig_ok:
+                tmp.unlink(missing_ok=True)
+                return False, f"更新包签名校验失败：{sig_msg}"
+            with zipfile.ZipFile(tmp) as zf:
+                inner = json.loads(zf.read("manifest.json").decode("utf-8"))
+            if inner.get("version") != man.get("version"):
+                tmp.unlink(missing_ok=True)
+                return False, f"包内版本 {inner.get('version')} 与源声明 {man.get('version')} 不一致"
+            os.replace(tmp, dst)
+            return True, f"下载完成 {n/1024/1024:.1f}MB（{sig_msg}）"
+        except Exception as e:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+            last_err = e
+    return False, f"下载失败: {last_err}"
 
 
 # ---------- 2026-09-29 安全审计：更新包密码学验签 ----------
