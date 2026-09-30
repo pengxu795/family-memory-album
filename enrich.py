@@ -441,6 +441,10 @@ def step_junk(con, limit=0, dry=False):
         """SELECT ma.asset_id FROM media_asset ma
            WHERE ma.asset_id NOT IN (SELECT asset_id FROM asset_allowlist_v0)
              AND ma.asset_id NOT IN (SELECT asset_id FROM asset_enrich_v0 WHERE junk_at IS NOT NULL)
+             AND ma.asset_id NOT IN
+                 (SELECT mf.asset_id FROM media_file mf
+                  JOIN source s ON s.source_id = mf.source_id
+                  WHERE COALESCE(s.auto_filter_skip, 0) = 1)
            ORDER BY ma.asset_id""")]
     log(f"[junk] 待判定资产 {len(ids)} 个")
     if limit:
@@ -1077,6 +1081,10 @@ def step_vision(con, limit=0, dry=False):
            WHERE ma.media_type='photo'
              AND ma.asset_id NOT IN (SELECT asset_id FROM asset_vision_check_v0)
              AND ma.asset_id NOT IN (SELECT asset_id FROM asset_allowlist_v0)
+             AND ma.asset_id NOT IN
+                 (SELECT mf.asset_id FROM media_file mf
+                  JOIN source s ON s.source_id = mf.source_id
+                  WHERE COALESCE(s.auto_filter_skip, 0) = 1)
              AND ma.asset_id NOT IN
                  (SELECT asset_id FROM asset_filter_v0
                   WHERE asset_id IS NOT NULL

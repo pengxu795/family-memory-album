@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.26"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.27"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -902,6 +902,13 @@ def _ensure_source_schema_impl(con):
     except Exception:
         pass  # 列已存在
     try:
+        # 2026-09-30：来源级自动过滤豁免。「工作参考」这类截图素材目录，
+        # 截图就是正片，自动规则（截图/下载/录屏/视觉判定）会把它们全部归档，
+        # 用户看到的是一个「摆设来源」。=1 时：新导入跳过自动规则，历史被归档的一并恢复。
+        con.execute("ALTER TABLE source ADD COLUMN auto_filter_skip INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass  # 列已存在
+    try:
         # 用实际 media_file 数量回填 indexed_count，避免旧数据全部显示 0/0
         con.execute("""UPDATE source SET indexed_count = COALESCE((SELECT COUNT(*) FROM media_file mf WHERE mf.source_id = source.source_id), 0)
                        WHERE COALESCE(indexed_count, 0) = 0""")
@@ -959,7 +966,7 @@ def source_list():
     _ensure_source_schema(con)
     rows = con.execute("""
         SELECT s.source_id, s.owner_label, s.root_path, s.display_path, s.source_type, s.last_scan_at, s.enabled,
-               s.total_files, s.indexed_count, s.failed_count,
+               s.total_files, s.indexed_count, s.failed_count, s.auto_filter_skip,
                (SELECT COUNT(*) FROM media_file mf WHERE mf.source_id = s.source_id) AS file_count,
                (SELECT COUNT(*) FROM media_file mf JOIN media_asset ma ON ma.asset_id = mf.asset_id
                  WHERE mf.source_id = s.source_id AND ma.asset_id NOT IN
@@ -990,6 +997,8 @@ def source_list():
         # 来源卡必须把这件事说清，否则「2/2 项却一张看不到」会被当成软件坏了。
         "visible_count": vc,
         "filtered_count": max(0, fc - vc),
+        # 2026-09-30：来源级「关闭自动过滤」开关（截图素材目录豁免）
+        "auto_filter_skip": bool(r["auto_filter_skip"] if "auto_filter_skip" in r.keys() else 0),
         "available": os.path.isdir(r["root_path"]),
         "healthy": bool((r["indexed_count"] or 0) > 0),
         })
@@ -1327,6 +1336,43 @@ def source_set_enabled(source_id, enabled):
     if cur.rowcount == 0:
         return {"error": "来源不存在"}
     return {"source_id": source_id, "enabled": bool(enabled)}
+
+
+def source_set_auto_filter(source_id, skip):
+    """来源级「关闭自动过滤」（2026-09-30）。
+
+    「工作参考」这类截图素材目录：截图就是正片，自动规则（截图/下载/录屏/视觉判定）
+    会把它们全部归档，来源看起来像摆设。skip=1 时：
+      ① 新导入跳过全部自动规则（_classify_import_junk / enrich step_junk / 视觉判定均豁免）；
+      ② 顺带把该来源**被自动规则**归档的资产恢复上墙并写入白名单防复杀；
+        用户手动移出的（manual）不动——那是有意为之。
+    """
+    con = sqlite3.connect(DB, timeout=30)
+    con.execute("PRAGMA busy_timeout=30000")
+    con.row_factory = sqlite3.Row
+    row = con.execute("SELECT owner_label FROM source WHERE source_id=?", (source_id,)).fetchone()
+    if not row:
+        con.close()
+        return {"error": "来源不存在"}
+    con.execute("UPDATE source SET auto_filter_skip=? WHERE source_id=?",
+                (1 if skip else 0, source_id))
+    con.commit()
+    con.close()
+    restored = 0
+    if skip:
+        con2 = sqlite3.connect(DB, timeout=30)
+        con2.execute("PRAGMA busy_timeout=30000")
+        ids = [r[0] for r in con2.execute(
+            """SELECT DISTINCT f.asset_id FROM asset_filter_v0 f
+               JOIN media_file mf ON mf.asset_id = f.asset_id
+               WHERE mf.source_id = ? AND f.rule_version LIKE 'auto-%'""", (source_id,))]
+        con2.close()
+        if ids:
+            filter_remove(ids)   # 删过滤行 + 写白名单防复杀（与「恢复到墙面」同一套）
+        restored = len(ids)
+    return {"ok": True, "source_id": source_id,
+            "auto_filter_skip": bool(skip), "restored": restored,
+            "label": row["owner_label"] if row else source_id}
 
 
 def source_remove(source_id):
@@ -8440,9 +8486,23 @@ def get_filter_count():
 def _classify_import_junk(new_meta):
     """导入时确定性垃圾判定：仅文件名/路径规则，零图片解码，低误杀。
     与 asset_filter_v0 现有 reason 语义一致。new_meta: [(asset_id, filename, relative_path), ...]
-    返回 filter_add 兼容的 items 列表（每个命中 reason 一行）。"""
+    返回 filter_add 兼容的 items 列表（每个命中 reason 一行）。
+    2026-09-30：auto_filter_skip=1 的来源整体豁免（截图素材目录，截图就是正片）。"""
+    skip_ids = set()
+    if new_meta:
+        try:
+            con = sqlite3.connect(DB, timeout=10)
+            skip_ids = {r[0] for r in con.execute(
+                """SELECT mf.asset_id FROM media_file mf
+                   JOIN source s ON s.source_id = mf.source_id
+                   WHERE COALESCE(s.auto_filter_skip, 0) = 1""")}
+            con.close()
+        except sqlite3.OperationalError:
+            skip_ids = set()
     items = []
     for aid, fn, rp in new_meta:
+        if aid in skip_ids:
+            continue
         fn_l = (fn or "").lower()
         rp_l = (rp or "").lower()
         reasons = []
@@ -12382,7 +12442,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers(); self.wfile.write(json.dumps(result, ensure_ascii=False, default=str).encode())
             return
         if self.path in ("/api/source/list", "/api/source/add", "/api/source/remove",
-                         "/api/source/toggle", "/api/source/scan", "/api/source/scan_status",
+                         "/api/source/toggle", "/api/source/auto_filter", "/api/source/scan", "/api/source/scan_status",
                          "/api/source/scanning", "/api/source/discover", "/api/source/autoscan"):
             length = int(self.headers.get("Content-Length", 0) or 0)
             try:
@@ -12396,6 +12456,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = source_remove(body.get("source_id", ""))
                 elif self.path == "/api/source/toggle":
                     result = source_set_enabled(body.get("source_id", ""), bool(body.get("enabled", True)))
+                elif self.path == "/api/source/auto_filter":
+                    result = source_set_auto_filter(body.get("source_id", ""), bool(body.get("skip", True)))
                 elif self.path == "/api/source/scan":
                     result = source_scan(body.get("source_id", ""))
                 elif self.path == "/api/source/scan_status":

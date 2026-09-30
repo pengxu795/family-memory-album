@@ -1,8 +1,8 @@
 {
- "version": "1.0.26",
- "file": "family_memory_update_v1.0.26.zip",
- "md5": "ce5f324376cb5e9bc6a24d94c5b0fedf",
- "size": 1432989,
- "notes": "全站死功能审计后补上最后一个缺口：「智能整理」后台一直在自动干活（新照片清晰度体检、重复分组、截图归档），但设置的任务面板里没有它的卡片，用户看不到它在跑、也不知道干到哪了，更不能手动触发。现在任务面板新增「智能整理」卡片：显示待体检数量、已自动归档数量、上次整理时间，可手动点「立即整理」，也可开关自动；顺带审计确认全站无其他死按钮/死设置",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.26/family_memory_update_v1.0.26.zip"
+ "version": "1.0.27",
+ "file": "family_memory_update_v1.0.27.zip",
+ "md5": "387e14e0f8c70efceccec5c1217505cf",
+ "size": 1434066,
+ "notes": "来源支持「关闭自动过滤」：截图素材目录（比如网上收集的参考图）里截图就是正片，不该被自动判定归档。来源卡新增「关闭自动过滤」按钮：开启后此来源新导入的照片直接上墙，之前被自动归档的一并恢复（你手动移出的不受影响）；可随时点回来恢复自动过滤。豁免覆盖导入规则、整理流水线的确定性规则与视觉判定三处",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.27/family_memory_update_v1.0.27.zip"
 }
