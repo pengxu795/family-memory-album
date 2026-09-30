@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.29"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.30"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -1360,12 +1360,16 @@ def source_set_auto_filter(source_id, skip):
     con.close()
     restored = 0
     if skip:
+        # ★ 匹配「全部自动规则」用 evidence_kind != 'user'，不能用 rule_version LIKE 'auto-%'
+        #（2026-09-30 线上实锤的洞）：enrich 视觉判定写的 rule_version 是 vision-filter-v1，
+        #  不带 auto- 前缀 → 用户开了豁免，AI 杀的那张照样躺在已过滤里。语义本该是：
+        #  除用户手动移出（evidence_kind='user'）外，机器杀的一律恢复。
         con2 = sqlite3.connect(DB, timeout=30)
         con2.execute("PRAGMA busy_timeout=30000")
         ids = [r[0] for r in con2.execute(
             """SELECT DISTINCT f.asset_id FROM asset_filter_v0 f
                JOIN media_file mf ON mf.asset_id = f.asset_id
-               WHERE mf.source_id = ? AND f.rule_version LIKE 'auto-%'""", (source_id,))]
+               WHERE mf.source_id = ? AND f.evidence_kind != 'user'""", (source_id,))]
         con2.close()
         if ids:
             filter_remove(ids)   # 删过滤行 + 写白名单防复杀（与「恢复到墙面」同一套）
