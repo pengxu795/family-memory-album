@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 # 数据目录外置（施工图#7）：Docker 里用 FF_DATA_DIR=/data 挂数据卷，换镜像升级不丢库。
 # 不设置时默认 ROOT/data，本地 Mac 行为零变化。
 DATA_DIR = Path(os.environ.get("FF_DATA_DIR") or (ROOT / "data"))
-APP_VERSION = "1.0.27"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
+APP_VERSION = "1.0.28"   # 在线升级版本号（发布新包时同步改这里，见 make_update.py）
 DB = DATA_DIR / "family_memory.db"
 STATIC = ROOT / "static"
 THUMB_DIR = DATA_DIR / "thumbs_mvp"
@@ -1943,8 +1943,14 @@ def verify_package_signature(zip_path, man):
 # 曾经这里只放行 server.py + static/**，结果 worker 脚本（转码等脱离 web 进程的
 # 后台程序）的修复**永远分发不到用户机器**，只能手工进容器拷文件——对一个要公开发布
 # 的产品是致命缺口：别人下载了你的项目，修好的转码器他却拿不到。
+# 2026-09-30 血案固化：v1.0.27 的「来源豁免自动过滤」改了 enrich.py 两处，但白名单没它，
+# 更新包里也没有 —— 线上豁免只装了一半，用户新加的截图照样被老 enrich.py 过滤。
+# 现在白名单直接从上面 WORKER_SCRIPTS 表**派生**：以后加 worker 只改那一张表，
+# 「launcher 分发 / 更新包白名单 / 四处同步自检」三条链路自动跟上，不存在漏登记。
 # 名单外的路径一律拒绝：远程 manifest 属外部可控数据，绝不放开任意文件写。
-UPDATE_ALLOWED_FILES = {"server.py", "transcode_log_videos.py"}
+UPDATE_ALLOWED_FILES = {"server.py"} | {
+    os.path.basename(p) for p in WORKER_SCRIPTS.values()
+}
 
 
 def _update_path_ok(p):

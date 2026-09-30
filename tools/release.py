@@ -140,6 +140,13 @@ def sensitive_scan(files) -> bool:
 def sync_from_mvp(files, version):
     """mvp → release：复制 + 脱敏 + 改版本号。static/ 与 REPO_DIRS 整目录同步。"""
     copy_list = list(files) + list(REPO_FILES)
+    # worker 脚本**每次发版无条件同步**（从 mvp server.py 的 WORKER_SCRIPTS 表解析）。
+    # 2026-09-30 补：此前靠手工拷，v1.0.27 忘了带 enrich.py 的更新包，线上豁免只装一半。
+    mvp_server = (MVP / "server.py").read_text(encoding="utf-8")
+    for w in worker_names_from(mvp_server):
+        if w not in copy_list:
+            copy_list.append(w)
+    copy_list = list(files) + list(REPO_FILES)
     for d in REPO_DIRS:
         src_dir = MVP / d
         if src_dir.is_dir():
@@ -194,6 +201,15 @@ def sync_from_mvp(files, version):
     return copy_list
 
 
+def worker_names_from(server_py_text):
+    """从 server.py 源码解析 WORKER_SCRIPTS 表里的 worker 脚本名（唯一真源，别处不许手抄）。"""
+    m = re.search(r"WORKER_SCRIPTS\s*=\s*\{.*?\{(.*?)\}\s*\.items\(\)", server_py_text, re.S)
+    need(m, "server.py 里找不到 WORKER_SCRIPTS 字面量，解析规则要跟着源码改")
+    workers = sorted(set(re.findall(r'"([^"]+\.py)"', m.group(1))))
+    need(workers, "WORKER_SCRIPTS 里没解析出任何 .py")
+    return workers
+
+
 def check_worker_sync():
     """校验「worker 脚本四处同步」铁律（2026-09-29 血案固化成断言）。
 
@@ -202,11 +218,7 @@ def check_worker_sync():
         Dockerfile 的 COPY 清单 / launcher.py 的 scripts 字典 / FamilyMemoryAlbum.spec 的 datas
     缺文件不报错、不崩溃，只是对应后台任务永远起不来 —— 历史上这么瞒了 9 天。
     """
-    s = (REL / "server.py").read_text(encoding="utf-8")
-    m = re.search(r"WORKER_SCRIPTS\s*=\s*\{.*?\{(.*?)\}\s*\.items\(\)", s, re.S)
-    need(m, "server.py 里找不到 WORKER_SCRIPTS 字面量，解析规则要跟着源码改")
-    workers = sorted(set(re.findall(r'"([^"]+\.py)"', m.group(1))))
-    need(workers, "WORKER_SCRIPTS 里没解析出任何 .py")
+    workers = worker_names_from((REL / "server.py").read_text(encoding="utf-8"))
     places = ["Dockerfile", "launcher.py", "FamilyMemoryAlbum.spec"]
     texts = {p: ((REL / p).read_text(encoding="utf-8") if (REL / p).exists() else "")
              for p in places}
@@ -220,22 +232,35 @@ def check_worker_sync():
     need(not bad, "worker 脚本没在四处同步 —— 补完 Dockerfile / launcher.py / .spec 再发版")
 
 
-def build_zip(version, notes, with_worker):
+def build_zip(version, notes, workers="none"):
+    """workers: 'none' 只发 server.py+static；'transcode' 旧行为；'all' 随包下发全部 worker。
+
+    2026-09-30 血案固化：v1.0.27 的「来源豁免自动过滤」改了 enrich.py，但打包只带
+    transcode 一个 worker —— enrich.py 永远分发不出去，线上豁免只装了一半，用户刚拉的
+    截图照样被老代码过滤（容器实测 /app/enrich.py 无豁免代码）。
+    注意 'all' 的前提：**目标机已在跑「白名单=worker 表派生」的版本**（v1.0.28+），
+    否则旧版 update_apply 会整包拒收（非法更新路径）。
+    """
     server_py = (REL / "server.py").read_text(encoding="utf-8")
     m = re.search(r'APP_VERSION\s*=\s*["\']([^"\']+)"', server_py)
     need(m and m.group(1) == version, "server.py 里的 APP_VERSION 与命令行不一致")
 
     allow = re.search(r'UPDATE_ALLOWED_FILES\s*=\s*\{([^}]*)\}', server_py)
     need(allow, "server.py 里找不到 UPDATE_ALLOWED_FILES 白名单")
-    allowed = set(re.findall(r'"([^"]+)"', allow.group(1)))
+    # 白名单 = 字面集合 ∪ WORKER_SCRIPTS 表（2026-09-30 起 server.py 侧白名单就是从
+    # worker 表派生的，这里并集解析两边都兼容：新代码字面量里只有 "server.py"）
+    allowed = set(re.findall(r'"([^"]+)"', allow.group(1))) | set(worker_names_from(server_py))
 
     files = [REL / "server.py"]
-    if with_worker:
-        need(WORKER in allowed,
-             "%s 不在白名单里，打包下发会让旧版本整包拒收，先单独发一版铺白名单" % WORKER)
-        need((REL / WORKER).is_file(), "release 仓里没有 %s" % WORKER)
-        files.append(REL / WORKER)
-        print("· 随包下发 worker:", WORKER)
+    bundle = {"none": [], "transcode": [WORKER]}.get(workers)
+    if bundle is None:                       # "all"
+        bundle = worker_names_from(server_py)
+    for w in bundle:
+        need(w in allowed,
+             "%s 不在白名单里，打包下发会让旧版本整包拒收，先单独发一版铺白名单" % w)
+        need((REL / w).is_file(), "release 仓里没有 %s" % w)
+        files.append(REL / w)
+        print("· 随包下发 worker:", w)
     for p in sorted((REL / "static").rglob("*")):
         if p.is_file() and not is_junk(p.relative_to(REL)):
             files.append(p)
@@ -406,7 +431,11 @@ def main():
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument("version")
     ap.add_argument("notes")
-    ap.add_argument("--with-worker", action="store_true")
+    ap.add_argument("--with-worker", action="store_true",
+                    help="旧开关：只随包下发转码 worker（transcode_log_videos.py）")
+    ap.add_argument("--all-workers", action="store_true",
+                    help="随包下发全部 worker 脚本（WORKER_SCRIPTS 表）。"
+                         "前提：目标机已在跑白名单=worker表派生的版本（v1.0.28+），否则整包被旧版拒收")
     ap.add_argument("--deploy", action="store_true")
     ap.add_argument("--no-git", action="store_true", help="只打包，不改 git")
     ap.add_argument("--sign-key", default=os.environ.get("FM_SIGN_KEY", ""),
@@ -426,7 +455,9 @@ def main():
     if sensitive_scan(files):
         print("!! 敏感扫描命中可疑项，确认上面列出的行都是安全文案再继续")
         sys.exit(1)
-    name, md5, size = build_zip(ver, notes, a.with_worker)
+    name, md5, size = build_zip(
+        ver, notes,
+        "all" if a.all_workers else ("transcode" if a.with_worker else "none"))
 
     # 2026-09-29：签名（可选）。没给 --sign-key 就跳过，但会明确提示当前是「无签名」模式。
     sig = None

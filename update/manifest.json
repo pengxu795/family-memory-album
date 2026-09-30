@@ -1,8 +1,8 @@
 {
- "version": "1.0.27",
- "file": "family_memory_update_v1.0.27.zip",
- "md5": "387e14e0f8c70efceccec5c1217505cf",
- "size": 1434066,
- "notes": "来源支持「关闭自动过滤」：截图素材目录（比如网上收集的参考图）里截图就是正片，不该被自动判定归档。来源卡新增「关闭自动过滤」按钮：开启后此来源新导入的照片直接上墙，之前被自动归档的一并恢复（你手动移出的不受影响）；可随时点回来恢复自动过滤。豁免覆盖导入规则、整理流水线的确定性规则与视觉判定三处",
- "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.27/family_memory_update_v1.0.27.zip"
+ "version": "1.0.28",
+ "file": "family_memory_update_v1.0.28.zip",
+ "md5": "417535d23fb89634fcd5f859c27832be",
+ "size": 1434051,
+ "notes": "修复：更新包白名单改为从 worker 表自动派生（铺路版），下版起 worker 脚本修复可随包分发",
+ "url": "https://github.com/pengxu795/family-memory-album/releases/download/1.0.28/family_memory_update_v1.0.28.zip"
 }
